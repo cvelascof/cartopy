@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2013 - 2016, Met Office
+# (C) British Crown Copyright 2013 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -18,21 +18,24 @@
 from __future__ import (absolute_import, division, print_function)
 
 import matplotlib.pyplot as plt
+import pytest
 
 import cartopy.crs as ccrs
 from cartopy.tests.mpl import ImageTesting
 
 
+@pytest.mark.natural_earth
 @ImageTesting(['lambert_conformal_south'])
 def test_lambert_south():
     # Reference image: http://www.icsm.gov.au/mapping/map_projections.html
     crs = ccrs.LambertConformal(central_longitude=140, cutoff=65,
-                                secant_latitudes=(-30, -60))
+                                standard_parallels=(-30, -60))
     ax = plt.axes(projection=crs)
     ax.coastlines()
     ax.gridlines()
 
 
+@pytest.mark.natural_earth
 @ImageTesting(['mercator_squashed'])
 def test_mercator_squashed():
     globe = ccrs.Globe(semimajor_axis=10000, semiminor_axis=9000,
@@ -41,8 +44,3 @@ def test_mercator_squashed():
     ax = plt.axes(projection=crs)
     ax.coastlines()
     ax.gridlines()
-
-
-if __name__ == '__main__':
-    import nose
-    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)

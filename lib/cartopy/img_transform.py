@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -23,7 +23,12 @@ transformations.
 from __future__ import (absolute_import, division, print_function)
 
 import numpy as np
-import scipy.spatial
+try:
+    import pykdtree.kdtree
+    _is_pykdtree = True
+except ImportError:
+    import scipy.spatial
+    _is_pykdtree = False
 
 import cartopy.crs as ccrs
 
@@ -32,35 +37,31 @@ def mesh_projection(projection, nx, ny,
                     x_extents=[None, None],
                     y_extents=[None, None]):
     """
-    Returns sample points in the given projection which span the entire
+    Return sample points in the given projection which span the entire
     projection range evenly.
 
     The range of the x-direction and y-direction sample points will be
     within the bounds of the projection or specified extents.
 
-    Args:
-
-    * projection:
+    Parameters
+    ----------
+    projection
         A :class:`~cartopy.crs.Projection` instance.
-
-    * nx:
+    nx: int
         The number of sample points in the projection x-direction.
-
-    * ny:
+    ny: int
         The number of sample points in the projection y-direction.
-
-    Kwargs:
-
-    * x_extents:
+    x_extents: optional
         The (lower, upper) x-direction extent of the projection.
         Defaults to the :attribute:`~cartopy.crs.Projection.x_limits`.
-
-    * y_extents:
+    y_extents: optional
         The (lower, upper) y-direction extent of the projection.
         Defaults to the :attribute:`~cartopy.crs.Projection.y_limits`.
 
-    Returns:
-        A tuple of three items. The x-direction sample points
+    Returns
+    -------
+    A tuple of three items.
+        The x-direction sample points
         :class:`numpy.ndarray` of shape (nx, ny), y-direction
         sample points :class:`numpy.ndarray` of shape (nx, ny),
         and the extent of the projection range as
@@ -102,21 +103,16 @@ def warp_img(fname, target_proj, source_proj=None, target_res=(400, 200)):
     """
     Regrid the image file from the source projection to the target projection.
 
-    Args:
-
-    * fname:
+    Parameters
+    ----------
+    fname
         Image filename to be loaded and warped.
-
-    * target_proj:
+    target_proj
         The target :class:`~cartopy.crs.Projection` instance for the image.
-
-    Kwargs:
-
-    * source_proj:
+    source_proj: optional
         The source :class:`~cartopy.crs.Projection` instance of the image.
         Defaults to a :class:`~cartopy.crs.PlateCarree` projection.
-
-    * target_res:
+    target_res: optional
         The (nx, ny) resolution of the target projection. Where nx defaults to
         400 sample points, and ny defaults to 200 sample points.
 
@@ -136,41 +132,33 @@ def warp_array(array, target_proj, source_proj=None, target_res=(400, 200),
 
     Also see, :function:`~cartopy.img_transform.regrid`.
 
-    Args:
-
-    * array:
+    Parameters
+    ----------
+    array
         The :class:`numpy.ndarray` of data to be regridded to the target
         projection.
-
-    * target_proj:
+    target_proj
         The target :class:`~cartopy.crs.Projection` instance for the data.
-
-    Kwargs:
-
-    * source_proj:
+    source_proj: optional
         The source :class:`~cartopy.crs.Projection' instance of the data.
         Defaults to a :class:`~cartopy.crs.PlateCarree` projection.
-
-    * target_res:
+    target_res: optional
         The (nx, ny) resolution of the target projection. Where nx defaults to
         400 sample points, and ny defaults to 200 sample points.
-
-    * source_extent:
+    source_extent: optional
         The (x-lower, x-upper, y-lower, y-upper) extent in native
         source projection coordinates.
-
-    * target_extent:
+    target_extent: optional
         The (x-lower, x-upper, y-lower, y-upper) extent in native
         target projection coordinates.
-
-    Kwargs:
-
-    * mask_extrapolated:
+    mask_extrapolated: optional
         Assume that the source coordinate is rectilinear and so mask the
         resulting target grid values which lie outside the source grid
         domain.
 
-    Returns:
+    Returns
+    -------
+    array, extent
         A tuple of the regridded :class:`numpy.ndarray` in the target
         projection and the (x-lower, x-upper, y-lower, y-upper) target
         projection extent.
@@ -239,41 +227,35 @@ def regrid(array, source_x_coords, source_y_coords, source_cs, target_proj,
     """
     Regrid the data array from the source projection to the target projection.
 
-    Args:
-
-    * array:
+    Parameters
+    ----------
+    array
         The :class:`numpy.ndarray` of data to be regridded to the
         target projection.
-
-    * source_x_coords:
+    source_x_coords
         A 2-dimensional source projection :class:`numpy.ndarray` of
         x-direction sample points.
-
-    * source_y_coords:
+    source_y_coords
         A 2-dimensional source projection :class:`numpy.ndarray` of
         y-direction sample points.
-
-    * source_cs:
+    source_cs
         The source :class:`~cartopy.crs.Projection` instance.
-
-    * target_cs:
+    target_cs
         The target :class:`~cartopy.crs.Projection` instance.
-
-    * target_x_points:
+    target_x_points
         A 2-dimensional target projection :class:`numpy.ndarray` of
         x-direction sample points.
-
-    * target_y_points:
+    target_y_points
         A 2-dimensional target projection :class:`numpy.ndarray` of
         y-direction sample points.
-
-    Kwargs:
-
-    * mask_extrapolated:
+    mask_extrapolated: optional
         Assume that the source coordinate is rectilinear and so mask the
         resulting target grid values which lie outside the source grid domain.
+        Defaults to False.
 
-    Returns:
+    Returns
+    -------
+    new_array
         The data array regridded in the target projection.
 
     """
@@ -293,47 +275,32 @@ def regrid(array, source_x_coords, source_y_coords, source_cs, target_proj,
                                            target_x_points.flatten(),
                                            target_y_points.flatten())
 
-    # Versions of scipy >= v0.16 added the balanced_tree argument,
-    # which caused the KDTree to hang with this input.
-    try:
-        kdtree = scipy.spatial.cKDTree(xyz, balanced_tree=False)
-    except TypeError:
-        kdtree = scipy.spatial.cKDTree(xyz)
-
-    distances, indices = kdtree.query(target_xyz, k=1)
-    mask = np.isinf(distances)
+    if _is_pykdtree:
+        kdtree = pykdtree.kdtree.KDTree(xyz)
+        # Use sqr_dists=True because we don't care about distances,
+        # and it saves a sqrt.
+        _, indices = kdtree.query(target_xyz, k=1, sqr_dists=True)
+    else:
+        # Versions of scipy >= v0.16 added the balanced_tree argument,
+        # which caused the KDTree to hang with this input.
+        try:
+            kdtree = scipy.spatial.cKDTree(xyz, balanced_tree=False)
+        except TypeError:
+            kdtree = scipy.spatial.cKDTree(xyz)
+        _, indices = kdtree.query(target_xyz, k=1)
+    mask = indices >= len(xyz)
+    indices[mask] = 0
 
     desired_ny, desired_nx = target_x_points.shape
-    if array.ndim == 1:
-        if np.any(mask):
-            array_1d = np.ma.array(array[indices], mask=mask)
-        else:
-            array_1d = array[indices]
-        new_array = array_1d.reshape(desired_ny, desired_nx)
-    elif array.ndim == 2:
-        # Handle missing neighbours using a masked array
-        if np.any(mask):
-            indices = np.where(np.logical_not(mask), indices, 0)
-            array_1d = np.ma.array(array.reshape(-1)[indices], mask=mask)
-        else:
-            array_1d = array.reshape(-1)[indices]
 
-        new_array = array_1d.reshape(desired_ny, desired_nx)
-    elif array.ndim == 3:
-        # Handle missing neighbours using a masked array
-        if np.any(mask):
-            indices = np.where(np.logical_not(mask), indices, 0)
-            array_2d = array.reshape(-1, array.shape[-1])[indices]
-            mask, array_2d = np.broadcast_arrays(
-                mask.reshape(-1, 1), array_2d)
-            array_2d = np.ma.array(array_2d, mask=mask)
-        else:
-            array_2d = array.reshape(-1, array.shape[-1])[indices]
-
-        new_array = array_2d.reshape(desired_ny, desired_nx, array.shape[-1])
+    # Squash the first two dims of the source array into one
+    temp_array = array.reshape((-1,) + array.shape[2:])
+    if np.any(mask):
+        new_array = np.ma.array(temp_array[indices])
+        new_array[mask] = np.ma.masked
     else:
-        raise ValueError(
-            'Expected array.ndim to be 1, 2 or 3, got {}'.format(array.ndim))
+        new_array = temp_array[indices]
+    new_array.shape = (desired_ny, desired_nx) + (array.shape[2:])
 
     # Do double transform to clip points that do not map back and forth
     # to the same point to within a fixed fractional offset.
@@ -354,25 +321,15 @@ def regrid(array, source_x_coords, source_y_coords, source_cs, target_proj,
     x_extent = np.abs(target_proj.x_limits[1] - target_proj.x_limits[0])
     y_extent = np.abs(target_proj.y_limits[1] - target_proj.y_limits[0])
 
-    non_self_inverse_points = (np.abs(target_x_points - back_to_target_x) /
-                               x_extent) > FRACTIONAL_OFFSET_THRESHOLD
+    non_self_inverse_points = (((np.abs(target_x_points - back_to_target_x) /
+                                 x_extent) > FRACTIONAL_OFFSET_THRESHOLD) |
+                               ((np.abs(target_y_points - back_to_target_y) /
+                                 y_extent) > FRACTIONAL_OFFSET_THRESHOLD))
     if np.any(non_self_inverse_points):
-        if np.ma.isMaskedArray(new_array):
-            new_array[non_self_inverse_points] = np.ma.masked
-        else:
+        if not np.ma.isMaskedArray(new_array):
             new_array = np.ma.array(new_array, mask=False)
-            if new_array.ndim == 3:
-                for i in range(new_array.shape[2]):
-                    new_array[non_self_inverse_points, i] = np.ma.masked
-            else:
-                new_array[non_self_inverse_points] = np.ma.masked
-    non_self_inverse_points = (np.abs(target_y_points - back_to_target_y) /
-                               y_extent) > FRACTIONAL_OFFSET_THRESHOLD
-    if np.any(non_self_inverse_points):
-        if np.ma.isMaskedArray(new_array):
-            new_array[non_self_inverse_points] = np.ma.masked
-        else:
-            new_array = np.ma.array(new_array, mask=non_self_inverse_points)
+
+        new_array[non_self_inverse_points] = np.ma.masked
 
     # Transform the target points to the source projection and mask any points
     # that fall outside the original source domain.
@@ -393,14 +350,9 @@ def regrid(array, source_x_coords, source_y_coords, source_cs, target_proj,
                                        (target_in_source_x >= bound_x[0]))
         outside_source_domain = outside_source_domain | ~tmp_inside
 
-        if np.ma.isMaskedArray(new_array):
-            if np.any(outside_source_domain):
-                new_array[outside_source_domain] = np.ma.masked
-        else:
-            new_array = np.ma.array(new_array, mask=False)
-            if new_array.ndim == 3:
-                for i in range(new_array.shape[2]):
-                    new_array[outside_source_domain, i] = np.ma.masked
-            else:
-                new_array[outside_source_domain] = np.ma.masked
+        if np.any(outside_source_domain):
+            if not np.ma.isMaskedArray(new_array):
+                new_array = np.ma.array(new_array, mask=False)
+            new_array[outside_source_domain] = np.ma.masked
+
     return new_array

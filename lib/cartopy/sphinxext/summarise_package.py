@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -21,30 +21,29 @@ import inspect
 import itertools
 import os
 import sys
+import sysconfig
 import warnings
 import six
-
-import cartopy.tests
 
 
 def walk_module(mod_name, exclude_folders=None):
     """
-    Recursively walks the given module name.
+    Recursively walk the given module name.
 
-    Returns:
-
-        A generator of::
-
-            (fully_qualified_import_name,
-             root_directory_of_subpackage,
-             fname_in_root_directory,
-             sub_folders_in_root_directory)
+    Returns
+    -------
+    generator of:
+        (fully_qualified_import_name,
+         root_directory_of_subpackage,
+         fname_in_root_directory,
+         sub_folders_in_root_directory)
 
     """
     __import__(mod_name)
     mod = sys.modules[mod_name]
     mod_dir = os.path.dirname(mod.__file__)
     exclude_folders = exclude_folders or []
+    SOABI = sysconfig.get_config_var('SOABI')
 
     for root, folders, files in os.walk(mod_dir):
         for folder in exclude_folders:
@@ -62,13 +61,15 @@ def walk_module(mod_name, exclude_folders=None):
         files.sort()
         folders.sort()
 
-        def is_py_src(fname):
-            root, ext = os.path.splitext(fname)
-            return ext in ('.py', '.so')
-
-        files = filter(is_py_src, files)
-
         for fname in files:
+            basename, ext = os.path.splitext(fname)
+            if ext == '.so':
+                basename, soabi = os.path.splitext(basename)
+                if soabi.lstrip('.') != SOABI:
+                    continue
+            elif ext != '.py':
+                continue
+
             sub_mod_name = mod_name
             relpath = os.path.relpath(root, mod_dir)
             if relpath == '.':
@@ -78,14 +79,14 @@ def walk_module(mod_name, exclude_folders=None):
                 sub_mod_name += '.' + sub_mod
 
             if fname != '__init__.py':
-                sub_mod_name += '.' + os.path.splitext(fname)[0]
+                sub_mod_name += '.' + basename
 
             yield sub_mod_name, root, fname, folders
 
 
 def objects_to_document(module_name):
     """
-    Creates a generator of (obj_name, obj) that the given module of the
+    Create a generator of (obj_name, obj) that the given module of the
     given name should document.
 
     The module name may be any importable, including submodules
@@ -162,7 +163,7 @@ def main(package_name, exclude_folders=None):
 
 def gen_summary_rst(app):
     """
-    Creates the rst file to summarise the desired packages.
+    Create the rst file to summarise the desired packages.
 
     """
     package_names = app.config.summarise_package_names
@@ -210,7 +211,6 @@ def gen_summary_rst(app):
             fh.write(content)
 
 
-@cartopy.tests.not_a_nose_fixture
 def setup(app):
     """
     Defined the Sphinx application interface for the summary generation.

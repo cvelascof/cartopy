@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -18,11 +18,11 @@
 from __future__ import (absolute_import, division, print_function)
 
 import numpy as np
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.collections import PatchCollection
 from matplotlib.path import Path
+import pytest
 import shapely.geometry as sgeom
 
 import cartopy.crs as ccrs
@@ -31,9 +31,8 @@ import cartopy.mpl.patch as cpatch
 from cartopy.tests.mpl import ImageTesting
 
 
-@ImageTesting(['poly_interiors'
-               if mpl.__version__ >= '1.5' else
-               'poly_interiors_pre_mpl_1.5'])
+@pytest.mark.natural_earth
+@ImageTesting(['poly_interiors'])
 def test_polygon_interiors():
 
     ax = plt.subplot(211, projection=ccrs.PlateCarree())
@@ -84,6 +83,7 @@ def test_polygon_interiors():
     ax.add_collection(collection)
 
 
+@pytest.mark.natural_earth
 @ImageTesting(['contour_with_interiors'])
 def test_contour_interiors():
     # produces a polygon with multiple holes:
@@ -123,8 +123,3 @@ def test_contour_interiors():
     ax.set_global()
     plt.contourf(lons, lats, data, numlev, transform=ccrs.PlateCarree())
     ax.coastlines()
-
-
-if __name__ == '__main__':
-    import nose
-    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)

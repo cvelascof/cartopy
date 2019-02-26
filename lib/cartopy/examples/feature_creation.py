@@ -1,4 +1,20 @@
+"""
+Feature Creation
+----------------
+
+This example manually instantiates a
+:class:`cartopy.feature.NaturalEarthFeature` to access administrative
+boundaries (states and provinces).
+
+Note that this example is intended to illustrate the ability to construct
+Natural Earth features that cartopy does not necessarily know about
+*a priori*.
+In this instance however, it would be possible to make use of the
+pre-defined :data:`cartopy.feature.STATES` constant.
+
+"""
 __tags__ = ['Lines and polygons']
+
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -6,8 +22,9 @@ from matplotlib.offsetbox import AnchoredText
 
 
 def main():
-    ax = plt.axes(projection=ccrs.PlateCarree())
-    ax.set_extent([80, 170, -45, 30])
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
+    ax.set_extent([80, 170, -45, 30], crs=ccrs.PlateCarree())
 
     # Put a background image on for nice sea rendering.
     ax.stock_img()

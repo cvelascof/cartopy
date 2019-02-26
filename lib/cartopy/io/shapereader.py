@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -17,28 +17,25 @@
 
 
 """
-Combines the shapefile access of pyshp with the
+Combine the shapefile access of pyshp with the
 geometry representation of shapely:
 
-    >>> import os.path
     >>> import cartopy.io.shapereader as shapereader
-    >>> filename = natural_earth(resolution='110m',
-    ...                          category='physical',
-    ...                          name='geography_regions_points')
+    >>> filename = shapereader.natural_earth(resolution='110m',
+    ...                                      category='physical',
+    ...                                      name='geography_regions_points')
     >>> reader = shapereader.Reader(filename)
     >>> len(reader)
     3
     >>> records = list(reader.records())
-    >>> print(type(records[0]))
-    <class 'cartopy.io.shapereader.Record'>
-    >>> print(sorted(records[0].attributes.keys()))
-    ['comment', 'featurecla', 'lat_y', 'long_x', 'name', 'name_alt', \
-'region', 'scalerank', 'subregion']
+    >>> print(', '.join(str(r) for r in sorted(records[0].attributes.keys())))
+    comment, ... name, name_alt, ... region, ...
     >>> print(records[0].attributes['name'])
     Niagara Falls
     >>> geoms = list(reader.geometries())
     >>> print(type(geoms[0]))
     <class 'shapely.geometry.point.Point'>
+    >>> reader.close()
 
 """
 
@@ -54,68 +51,14 @@ import six
 
 from cartopy.io import Downloader
 from cartopy import config
-
+_HAS_FIONA = False
+try:
+    import fiona
+    _HAS_FIONA = True
+except ImportError:
+    pass
 
 __all__ = ['Reader', 'Record']
-
-
-def _create_point(shape):
-    return sgeom.Point(shape.points[0])
-
-
-def _create_polyline(shape):
-    if not shape.points:
-        return sgeom.MultiLineString()
-
-    parts = list(shape.parts) + [None]
-    bounds = zip(parts[:-1], parts[1:])
-    lines = [shape.points[slice(lower, upper)] for lower, upper in bounds]
-    return sgeom.MultiLineString(lines)
-
-
-def _create_polygon(shape):
-    if not shape.points:
-        return sgeom.MultiPolygon()
-
-    # Partition the shapefile rings into outer rings/polygons (clockwise) and
-    # inner rings/holes (anti-clockwise).
-    parts = list(shape.parts) + [None]
-    bounds = zip(parts[:-1], parts[1:])
-    outer_polygons_and_holes = []
-    inner_polygons = []
-    for lower, upper in bounds:
-        polygon = sgeom.Polygon(shape.points[slice(lower, upper)])
-        if polygon.exterior.is_ccw:
-            inner_polygons.append(polygon)
-        else:
-            outer_polygons_and_holes.append((polygon, []))
-
-    # Find the appropriate outer ring for each inner ring.
-    # aka. Group the holes with their containing polygons.
-    for inner_polygon in inner_polygons:
-        for outer_polygon, holes in outer_polygons_and_holes:
-            if outer_polygon.contains(inner_polygon):
-                holes.append(inner_polygon.exterior.coords)
-                break
-
-    polygon_defns = [(outer_polygon.exterior.coords, holes)
-                     for outer_polygon, holes in outer_polygons_and_holes]
-    return sgeom.MultiPolygon(polygon_defns)
-
-
-def _make_geometry(geometry_factory, shape):
-    geometry = None
-    if shape.shapeType != shapefile.NULL:
-        geometry = geometry_factory(shape)
-    return geometry
-
-
-# The mapping from shapefile shapeType values to geometry creation functions.
-GEOMETRY_FACTORIES = {
-    shapefile.POINT: _create_point,
-    shapefile.POLYLINE: _create_polyline,
-    shapefile.POLYGON: _create_polygon,
-}
 
 
 class Record(object):
@@ -124,9 +67,8 @@ class Record(object):
     their associated geometry.
 
     """
-    def __init__(self, shape, geometry_factory, attributes, fields):
+    def __init__(self, shape, attributes, fields):
         self._shape = shape
-        self._geometry_factory = geometry_factory
 
         self._bounds = None
         # if the record defines a bbox, then use that for the shape's bounds,
@@ -134,7 +76,7 @@ class Record(object):
         if hasattr(shape, 'bbox'):
             self._bounds = tuple(shape.bbox)
 
-        self._geometry = False
+        self._geometry = None
         """The cached geometry instance for this Record."""
 
         self.attributes = attributes
@@ -151,8 +93,7 @@ class Record(object):
     @property
     def bounds(self):
         """
-        The bounds of this Record's
-        :meth:`~Record.geometry`.
+        The bounds of this Record's :meth:`~Record.geometry`.
 
         """
         if self._bounds is None:
@@ -168,15 +109,27 @@ class Record(object):
         shapefile.
 
         """
-        if self._geometry is False:
-            self._geometry = _make_geometry(self._geometry_factory,
-                                            self._shape)
+        if not self._geometry and self._shape.shapeType != shapefile.NULL:
+            self._geometry = sgeom.shape(self._shape)
         return self._geometry
 
 
-class Reader(object):
+class FionaRecord(Record):
     """
-    Provides an interface for accessing the contents of a shapefile.
+    A single logical entry from a shapefile, combining the attributes with
+    their associated geometry. This extends the standard Record to work
+    with the FionaReader.
+
+    """
+    def __init__(self, geometry, attributes):
+        self._geometry = geometry
+        self.attributes = attributes
+        self._bounds = geometry.bounds
+
+
+class BasicReader(object):
+    """
+    Provide an interface for accessing the contents of a shapefile.
 
     The primary methods used on a Reader instance are
     :meth:`~Reader.records` and :meth:`~Reader.geometries`.
@@ -189,16 +142,92 @@ class Reader(object):
             raise ValueError("Incomplete shapefile definition "
                              "in '%s'." % filename)
 
-        # Figure out how to make appropriate shapely geometry instances
-        shapeType = reader.shapeType
-        self._geometry_factory = GEOMETRY_FACTORIES.get(shapeType)
-        if self._geometry_factory is None:
-            raise ValueError('Unsupported shape type: %s' % shapeType)
-
         self._fields = self._reader.fields
+
+    def close(self):
+        return self._reader.close()
 
     def __len__(self):
         return self._reader.numRecords
+
+    def geometries(self):
+        """
+        Return an iterator of shapely geometries from the shapefile.
+
+        This interface is useful for accessing the geometries of the
+        shapefile where knowledge of the associated metadata is not necessary.
+        In the case where further metadata is needed use the
+        :meth:`~Reader.records`
+        interface instead, extracting the geometry from the record with the
+        :meth:`~Record.geometry` method.
+
+        """
+        for i in range(self._reader.numRecords):
+            yield sgeom.shape(self._reader.shape(i))
+
+    def records(self):
+        """
+        Return an iterator of :class:`~Record` instances.
+
+        """
+        # Ignore the "DeletionFlag" field which always comes first
+        fields = self._reader.fields[1:]
+        field_names = [field[0] for field in fields]
+        for i in range(self._reader.numRecords):
+            shape_record = self._reader.shapeRecord(i)
+            attributes = dict(zip(field_names, shape_record.record))
+            yield Record(shape_record.shape, attributes, fields)
+
+
+class FionaReader(object):
+    """
+    Provides an interface for accessing the contents of a shapefile
+    with the fiona library, which has a much faster reader than pyshp.
+
+    The primary methods used on a Reader instance are
+    :meth:`~Reader.records` and :meth:`~Reader.geometries`.
+
+    """
+    def __init__(self, filename, bbox=None):
+        self._data = []
+
+        with fiona.open(filename) as f:
+            if bbox is not None:
+                assert len(bbox) == 4
+                features = f.filter(bbox=bbox)
+            else:
+                features = f
+
+            # Handle feature collections
+            if hasattr(features, "__geo_interface__"):
+                fs = features.__geo_interface__
+            else:
+                fs = features
+
+            if isinstance(fs, dict) and fs.get('type') == 'FeatureCollection':
+                features_lst = fs['features']
+            else:
+                features_lst = features
+
+            for feature in features_lst:
+                if hasattr(f, "__geo_interface__"):
+                    feature = feature.__geo_interface__
+                else:
+                    feature = feature
+
+                d = {'geometry': sgeom.shape(feature['geometry'])
+                     if feature['geometry'] else None}
+                d.update(feature['properties'])
+                self._data.append(d)
+
+    def close(self):
+        # TODO: Keep the Fiona handle open until this is called.
+        # This will enable us to pass down calls for bounding box queries,
+        # rather than having to have it all in memory.
+        pass
+
+    def __len__(self):
+        return len(self._data)
 
     def geometries(self):
         """
@@ -212,30 +241,29 @@ class Reader(object):
         :meth:`~Record.geometry` method.
 
         """
-        geometry_factory = self._geometry_factory
-        for i in range(self._reader.numRecords):
-            shape = self._reader.shape(i)
-            yield _make_geometry(geometry_factory, shape)
+        for item in self._data:
+            yield item['geometry']
 
     def records(self):
         """
         Returns an iterator of :class:`~Record` instances.
 
         """
-        geometry_factory = self._geometry_factory
-        # Ignore the "DeletionFlag" field which always comes first
-        fields = self._reader.fields[1:]
-        field_names = [field[0] for field in fields]
-        for i in range(self._reader.numRecords):
-            shape_record = self._reader.shapeRecord(i)
-            attributes = dict(zip(field_names, shape_record.record))
-            yield Record(shape_record.shape, geometry_factory, attributes,
-                         fields)
+        for item in self._data:
+            yield FionaRecord(item['geometry'],
+                              {key: value for key, value in
+                               item.items() if key != 'geometry'})
+
+
+if _HAS_FIONA:
+    Reader = FionaReader
+else:
+    Reader = BasicReader
 
 
 def natural_earth(resolution='110m', category='physical', name='coastline'):
     """
-    Returns the path to the requested natural earth shapefile,
+    Return the path to the requested natural earth shapefile,
     downloading and unziping if necessary.
 
     To identify valid components for this function, either browse
@@ -243,8 +271,8 @@ def natural_earth(resolution='110m', category='physical', name='coastline'):
     https://github.com/nvkelso/natural-earth-vector/tree/master/zips to
     see the actual files which will be downloaded.
 
-    .. note::
-
+    Note
+    ----
         Some of the Natural Earth shapefiles have special features which are
         described in the name. For example, the 110m resolution
         "admin_0_countries" data also has a sibling shapefile called
@@ -266,7 +294,7 @@ def natural_earth(resolution='110m', category='physical', name='coastline'):
 
 class NEShpDownloader(Downloader):
     """
-    Specialises :class:`cartopy.io.Downloader` to download the zipped
+    Specialise :class:`cartopy.io.Downloader` to download the zipped
     Natural Earth shapefiles and extract them to the defined location
     (typically user configurable).
 
@@ -294,7 +322,7 @@ class NEShpDownloader(Downloader):
 
     def zip_file_contents(self, format_dict):
         """
-        Returns a generator of the filenames to be found in the downloaded
+        Return a generator of the filenames to be found in the downloaded
         natural earth zip file.
 
         """
@@ -304,7 +332,7 @@ class NEShpDownloader(Downloader):
 
     def acquire_resource(self, target_path, format_dict):
         """
-        Downloads the zip file and extracts the files listed in
+        Download the zip file and extracts the files listed in
         :meth:`zip_file_contents` to the target path.
 
         """
@@ -323,7 +351,7 @@ class NEShpDownloader(Downloader):
         for member_path in self.zip_file_contents(format_dict):
             ext = os.path.splitext(member_path)[1]
             target = os.path.splitext(target_path)[0] + ext
-            member = zfh.getinfo(member_path)
+            member = zfh.getinfo(member_path.replace(os.sep, '/'))
             with open(target, 'wb') as fh:
                 fh.write(zfh.open(member).read())
 
@@ -335,7 +363,7 @@ class NEShpDownloader(Downloader):
     @staticmethod
     def default_downloader():
         """
-        Returns a generic, standard, NEShpDownloader instance.
+        Return a generic, standard, NEShpDownloader instance.
 
         Typically, a user will not need to call this staticmethod.
 
@@ -344,11 +372,11 @@ class NEShpDownloader(Downloader):
             >>> ne_dnldr = NEShpDownloader.default_downloader()
             >>> print(ne_dnldr.target_path_template)
             {config[data_dir]}/shapefiles/natural_earth/{category}/\
-{resolution}_{name}.shp
+ne_{resolution}_{name}.shp
 
         """
         default_spec = ('shapefiles', 'natural_earth', '{category}',
-                        '{resolution}_{name}.shp')
+                        'ne_{resolution}_{name}.shp')
         ne_path_template = os.path.join('{config[data_dir]}', *default_spec)
         pre_path_template = os.path.join('{config[pre_existing_data_dir]}',
                                          *default_spec)
@@ -365,7 +393,7 @@ config['downloaders'].setdefault(_ne_key,
 
 def gshhs(scale='c', level=1):
     """
-    Returns the path to the requested GSHHS shapefile,
+    Return the path to the requested GSHHS shapefile,
     downloading and unziping if necessary.
 
     """
@@ -380,7 +408,7 @@ def gshhs(scale='c', level=1):
 
 class GSHHSShpDownloader(Downloader):
     """
-    Specialises :class:`cartopy.io.Downloader` to download the zipped
+    Specialise :class:`cartopy.io.Downloader` to download the zipped
     GSHHS shapefiles and extract them to the defined location.
 
     The keys which should be passed through when using the ``format_dict``
@@ -404,7 +432,7 @@ class GSHHSShpDownloader(Downloader):
 
     def zip_file_contents(self, format_dict):
         """
-        Returns a generator of the filenames to be found in the downloaded
+        Return a generator of the filenames to be found in the downloaded
         GSHHS zip file for the specified resource.
 
         """
@@ -436,7 +464,7 @@ class GSHHSShpDownloader(Downloader):
             for member_path in self.zip_file_contents(modified_format_dict):
                 ext = os.path.splitext(member_path)[1]
                 target = os.path.splitext(target_path)[0] + ext
-                member = zfh.getinfo(member_path)
+                member = zfh.getinfo(member_path.replace(os.sep, '/'))
                 with open(target, 'wb') as fh:
                     fh.write(zfh.open(member).read())
 
@@ -444,11 +472,11 @@ class GSHHSShpDownloader(Downloader):
 
     def acquire_resource(self, target_path, format_dict):
         """
-        Downloads the zip file and extracts the files listed in
+        Download the zip file and extracts the files listed in
         :meth:`zip_file_contents` to the target path.
 
-        .. note:
-
+        Note
+        ----
             Because some of the GSHSS data is available with the cartopy
             repository, scales of "l" or "c" will not be downloaded if they
             exist in the ``cartopy.config['repo_data_dir']`` directory.
@@ -471,7 +499,7 @@ class GSHHSShpDownloader(Downloader):
     @staticmethod
     def default_downloader():
         """
-        Returns a GSHHSShpDownloader instance that expects (and if necessary
+        Return a GSHHSShpDownloader instance that expects (and if necessary
         downloads and installs) shapefiles in the data directory of the
         cartopy installation.
 

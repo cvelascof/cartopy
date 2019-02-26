@@ -2,7 +2,7 @@
 # https://github.com/matplotlib/matplotlib/pull/6213.
 # License: matplotlib BSD-3.
 """
-A directive for including a matplotlib plot in a Sphinx document.
+A directive for including a Matplotlib plot in a Sphinx document.
 
 By default, in HTML output, `plot` will include a .png file with a
 link to a high-res .png and .pdf.  In LaTeX output, it will include a
@@ -136,8 +136,8 @@ The plot directive has the following configuration options:
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-from matplotlib.externals import six
-from matplotlib.externals.six.moves import xrange
+import six
+from six.moves import xrange
 
 import sys, os, shutil, io, re, textwrap
 from os.path import relpath
@@ -442,7 +442,7 @@ class ImageFile(object):
 
 def out_of_date(original, derived):
     """
-    Returns True if derivative is out-of-date wrt original,
+    Return True if derivative is out-of-date wrt original,
     both of which are full file paths.
     """
     return (not os.path.exists(derived) or

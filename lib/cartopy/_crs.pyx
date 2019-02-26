@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -14,9 +14,11 @@
 #
 # You should have received a copy of the GNU Lesser General Public License
 # along with cartopy.  If not, see <https://www.gnu.org/licenses/>.
+#
+# cython: embedsignature=True
 
 """
-This module defines the core CRS class which can interface with Proj.4.
+This module defines the core CRS class which can interface with Proj.
 The CRS class is the base-class for all projections defined in :mod:`cartopy.crs`.
 
 """
@@ -33,17 +35,9 @@ cimport numpy as np
 from cython.operator cimport dereference as deref
 
 
-cdef extern from "proj_api.h":
-    ctypedef void *projPJ
-    projPJ pj_init_plus(char *)
-    void pj_free(projPJ)
-    int pj_transform(projPJ, projPJ, long, int, double *, double *, double *)
-    int pj_is_latlong(projPJ)
-    char *pj_strerrno(int)
-    int *pj_get_errno_ref()
-    char *pj_get_release()
-    double DEG_TO_RAD
-    double RAD_TO_DEG
+from ._proj4 cimport (pj_init_plus, pj_free, pj_transform, pj_is_latlong,
+                      pj_strerrno, pj_get_errno_ref, pj_get_release,
+                      DEG_TO_RAD, RAD_TO_DEG)
 
 
 cdef double NAN = float('nan')
@@ -58,26 +52,29 @@ if _match is not None:
 else:
     PROJ4_VERSION = ()
 
+WGS84_SEMIMAJOR_AXIS = 6378137.0
+WGS84_SEMIMINOR_AXIS = 6356752.3142
+
 
 class Proj4Error(Exception):
     """
     Raised when there has been an exception calling proj.4.
 
-    Adds a ``status`` attribute to the exception which has the
+    Add a ``status`` attribute to the exception which has the
     proj.4 error reference.
 
     """
     def __init__(self):
         cdef int status
         status = deref(pj_get_errno_ref())
-        msg = 'Error from proj.4: {}'.format(pj_strerrno(status))
+        msg = 'Error from proj: {}'.format(pj_strerrno(status))
         self.status = status
         Exception.__init__(self, msg)
 
 
 class Globe(object):
     """
-    Defines an ellipsoid and, optionally, how to relate it to the real world.
+    Define an ellipsoid and, optionally, how to relate it to the real world.
 
     """
     def __init__(self, datum=None, ellipse='WGS84',
@@ -85,23 +82,24 @@ class Globe(object):
                  flattening=None, inverse_flattening=None,
                  towgs84=None, nadgrids=None):
         """
-        Keywords:
-
-            * datum - Proj4 "datum" definiton. Default to no datum.
-
-            * ellipse - Proj4 "ellps" definiton. Default to 'WGS84'.
-
-            * semimajor_axis - Semimajor axis of the spheroid / ellipsoid.
-
-            * semiminor_axis - Semiminor axis of the ellipsoid.
-
-            * flattening - Flattening of the ellipsoid.
-
-            * inverse_flattening - Inverse flattening of the ellipsoid.
-
-            * towgs84 - Passed through to the Proj4 definition.
-            
-            * nadgrids - Passed through to the Proj4 definition.
+        Parameters
+        ----------
+        datum
+            Proj "datum" definition. Defaults to None.
+        ellipse
+            Proj "ellps" definition. Defaults to 'WGS84'.
+        semimajor_axis
+            Semimajor axis of the spheroid / ellipsoid.  Defaults to None.
+        semiminor_axis
+            Semiminor axis of the ellipsoid.  Defaults to None.
+        flattening
+            Flattening of the ellipsoid.  Defaults to None.
+        inverse_flattening
+            Inverse flattening of the ellipsoid.  Defaults to None.
+        towgs84
+            Passed through to the Proj definition.  Defaults to None.
+        nadgrids
+            Passed through to the Proj definition.  Defaults to None.
 
         """
         self.datum = datum
@@ -116,7 +114,7 @@ class Globe(object):
     def to_proj4_params(self):
         """
         Create an OrderedDict of key value pairs which represents this globe
-        in terms of proj4 params.
+        in terms of proj params.
 
         """
         proj4_params = (['datum', self.datum], ['ellps', self.ellipse],
@@ -128,24 +126,49 @@ class Globe(object):
 
 cdef class CRS:
     """
-    Defines a Coordinate Reference System using proj.4.
+    Define a Coordinate Reference System using proj.
 
     """
+
+    #: Whether this projection can handle ellipses.
+    _handles_ellipses = True
+
+    def __cinit__(self):
+        self.proj4 = NULL
+
+    def __dealloc__(self):
+        if self.proj4 != NULL:
+            pj_free(self.proj4)
+
     def __init__(self, proj4_params, globe=None):
         """
         Parameters
         ----------
-        proj4_params : iterable of key-value pairs
-            The proj4 parameters required to define the desired CRS.
-            The parameters should not describe the desired elliptic model,
-            instead create an appropriate Globe instance. The ``proj4_params``
-            parameters will override any parameters that the Globe defines.
-        globe : :class:`~cartopy.crs.Globe` instance, optional
+        proj4_params: iterable of key-value pairs
+            The proj4 parameters required to define the
+            desired CRS.  The parameters should not describe
+            the desired elliptic model, instead create an
+            appropriate Globe instance. The ``proj4_params``
+            parameters will override any parameters that the
+            Globe defines.
+        globe: :class:`~cartopy.crs.Globe` instance, optional
             If omitted, the default Globe instance will be created.
             See :class:`~cartopy.crs.Globe` for details.
 
         """
-        self.globe = globe or Globe()
+        if globe is None:
+            if self._handles_ellipses:
+                globe = Globe()
+            else:
+                globe = Globe(semimajor_axis=WGS84_SEMIMAJOR_AXIS,
+                              ellipse=None)
+        if not self._handles_ellipses:
+            a = globe.semimajor_axis or WGS84_SEMIMAJOR_AXIS
+            b = globe.semiminor_axis or a
+            if a != b or globe.ellipse is not None:
+                warnings.warn('The "{}" projection does not handle elliptical '
+                              'globes.'.format(self.__class__.__name__))
+        self.globe = globe
         self.proj4_params = self.globe.to_proj4_params()
         self.proj4_params.update(proj4_params)
 
@@ -162,6 +185,8 @@ cdef class CRS:
                 init_items.append('+{}'.format(k))
         self.proj4_init = ' '.join(init_items) + ' +no_defs'
         proj4_init_bytes = six.b(self.proj4_init)
+        if self.proj4 != NULL:
+            pj_free(self.proj4)
         self.proj4 = pj_init_plus(proj4_init_bytes)
         if not self.proj4:
             raise Proj4Error()
@@ -180,25 +205,30 @@ cdef class CRS:
         return result
 
     def __hash__(self):
-        """Hashes the CRS based on its proj4_init string."""
+        """Hash the CRS based on its proj4_init string."""
         return hash(self.proj4_init)
 
     def __reduce__(self):
         """
-        Implements the __reduce__ API so that unpickling produces a stateless
+        Implement the __reduce__ API so that unpickling produces a stateless
         instance of this class (e.g. an empty tuple). The state will then be
         added via __getstate__ and __setstate__.
+
         """
         return self.__class__, tuple()
 
     def __getstate__(self):
-        """Returns the full state of this instance for reconstruction in ``__setstate__``."""
+        """Return the full state of this instance for reconstruction
+        in ``__setstate__``.
+
+        """
         return {'proj4_params': self.proj4_params}
 
     def __setstate__(self, state):
         """
-        Takes the dictionary created by ``__getstate__`` and passes it through to the
-        class's __init__ method.
+        Take the dictionary created by ``__getstate__`` and passes it
+        through to the class's __init__ method.
+
         """
         self.__init__(self, **state)
 
@@ -208,8 +238,8 @@ cdef class CRS:
 
     def _as_mpl_transform(self, axes=None):
         """
-        Casts this CRS instance into a :class:`matplotlib.axes.Axes` using
-        the matplotlib ``_as_mpl_transform`` interface.
+        Cast this CRS instance into a :class:`matplotlib.axes.Axes` using
+        the Matplotlib ``_as_mpl_transform`` interface.
 
         """
         # lazy import mpl.geoaxes (and therefore matplotlib) as mpl
@@ -225,7 +255,7 @@ cdef class CRS:
 
     def as_geocentric(self):
         """
-        Returns a new Geocentric CRS with the same ellipse/datum as this
+        Return a new Geocentric CRS with the same ellipse/datum as this
         CRS.
 
         """
@@ -233,7 +263,7 @@ cdef class CRS:
 
     def as_geodetic(self):
         """
-        Returns a new Geodetic CRS with the same ellipse/datum as this
+        Return a new Geodetic CRS with the same ellipse/datum as this
         CRS.
 
         """
@@ -249,18 +279,22 @@ cdef class CRS:
         Transform the given float64 coordinate pair, in the given source
         coordinate system (``src_crs``), to this coordinate system.
 
-        Args:
+        Parameters
+        ----------
+        x
+            the x coordinate, in ``src_crs`` coordinates, to transform
+        y
+            the y coordinate, in ``src_crs`` coordinates, to transform
+        src_crs
+            instance of :class:`CRS` that represents the coordinate
+            system of ``x`` and ``y``.
+        trap
+            Whether proj errors for "latitude or longitude exceeded limits" and
+            "tolerance condition error" should be trapped.
 
-        * x - the x coordinate, in ``src_crs`` coordinates, to transform
-        * y - the y coordinate, in ``src_crs`` coordinates, to transform
-        * src_crs - instance of :class:`CRS` that represents the coordinate
-                    system of ``x`` and ``y``.
-        * trap - Whether proj.4 errors for "latitude or longitude exceeded limits" and
-                 "tolerance condition error" should be trapped.
-
-        Returns:
-
-            (x, y) - in this coordinate system
+        Returns
+        -------
+        (x, y) in this coordinate system
 
         """
         cdef:
@@ -295,19 +329,25 @@ cdef class CRS:
         Transform the given coordinates, in the given source
         coordinate system (``src_crs``), to this coordinate system.
 
-        Args:
+        Parameters
+        ----------
+        src_crs
+            instance of :class:`CRS` that represents the
+            coordinate system of ``x``, ``y`` and ``z``.
+        x
+            the x coordinates (array), in ``src_crs`` coordinates,
+            to transform.  May be 1 or 2 dimensional.
+        y
+            the y coordinates (array), in ``src_crs`` coordinates,
+            to transform.  Its shape must match that of x.
+        z: optional
+            the z coordinates (array), in ``src_crs`` coordinates, to
+            transform.  Defaults to None.
+            If supplied, its shape must match that of x.
 
-        * src_crs - instance of :class:`CRS` that represents the coordinate
-                    system of ``x``, ``y`` and ``z``.
-        * x - the x coordinates (array), in ``src_crs`` coordinates,
-              to transform.  May be 1 or 2 dimensional.
-        * y - the y coordinates (array), in ``src_crs`` coordinates,
-              to transform
-        * z - (optional) the z coordinates (array), in ``src_crs``
-              coordinates, to transform.
-
-        Returns:
-           Array of shape ``x.shape + (3, )`` in this coordinate system.
+        Returns
+        -------
+            Array of shape ``x.shape + (3, )`` in this coordinate system.
 
         """
         cdef np.ndarray[np.double_t, ndim=2] result
@@ -349,9 +389,11 @@ cdef class CRS:
         else:
             result[:, 2] = z
 
-        # call proj.4. The result array is modified in place.
-        status = pj_transform(src_crs.proj4, self.proj4, npts, 3,
-                              &result[0, 0], &result[0, 1], &result[0, 2])
+        # call proj. The result array is modified in place. This is only
+        # safe if npts is not 0.
+        if npts:
+            status = pj_transform(src_crs.proj4, self.proj4, npts, 3,
+                                  &result[0, 0], &result[0, 1], &result[0, 2])
 
         if self.is_geodetic():
             result[:, :2] = np.rad2deg(result[:, :2])
@@ -363,36 +405,41 @@ cdef class CRS:
 
         return result
 
-    def transform_vectors(self, src_crs, x, y, u, v):
+    def transform_vectors(self, src_proj, x, y, u, v):
         """
-        transform_vectors(src_crs, x, y, u, v)
+        transform_vectors(src_proj, x, y, u, v)
 
         Transform the given vector components, with coordinates in the
-        given source coordinate system (``src_crs``), to this coordinate
+        given source coordinate system (``src_proj``), to this coordinate
         system. The vector components must be given relative to the
-        source coordinate system (grid eastward and grid northward).
+        source projection's coordinate reference system (grid eastward and
+        grid northward).
 
-        Args:
+        Parameters
+        ----------
+        src_proj
+            The :class:`CRS.Projection` that represents the coordinate system
+            the vectors are defined in.
+        x
+            The x coordinates of the vectors in the source projection.
+        y
+            The y coordinates of the vectors in the source projection.
+        u
+            The grid-eastward components of the vectors.
+        v
+            The grid-northward components of the vectors.
 
-        * src_crs:
-            The :class:`CRS` that represents the coordinate system the
-            vectors are defined in.
-        * x, y:
-            The x and y coordinates, in the source CRS coordinates,
-            where the vector components are located. May be 1 or 2
-            dimensional, but must have matching shapes.
-        * u, v:
-            The grid eastward and grid northward components of the
-            vector field respectively. Their shape must match the shape
-            of the x and y coordinates.
+        Note
+        ----
+            x, y, u and v may be 1 or 2 dimensional, but must all have matching
+            shapes.
 
-        Returns:
+        Returns
+        -------
+            ut, vt: The transformed vector components.
 
-        * ut, vt:
-            The transformed vector components.
-
-        .. note::
-
+        Note
+        ----
            The algorithm used to transform vectors is an approximation
            rather than an exact transform, but the accuracy should be
            good enough for visualization purposes.
@@ -403,7 +450,7 @@ cdef class CRS:
         if x.ndim not in (1, 2):
             raise ValueError('x, y, u and v must be 1 or 2 dimensional')
         # Transform the coordinates to the target projection.
-        proj_xyz = self.transform_points(src_crs, x, y)
+        proj_xyz = self.transform_points(src_proj, x, y)
         target_x, target_y = proj_xyz[..., 0], proj_xyz[..., 1]
         # Rotate the input vectors to the projection.
         #
@@ -415,7 +462,7 @@ cdef class CRS:
         #    the poles the point may have to be in the opposite direction
         #    to be valid).
         factor = 360000.
-        delta = (src_crs.x_limits[1] - src_crs.x_limits[0]) / factor
+        delta = (src_proj.x_limits[1] - src_proj.x_limits[0]) / factor
         x_perturbations = delta * np.cos(vector_angles)
         y_perturbations = delta * np.sin(vector_angles)
         # 3: Handle points that are invalid. These come from picking a new
@@ -426,15 +473,15 @@ cdef class CRS:
         #    valid x-domain and fix them. After that do the same for points
         #    that are outside the valid y-domain, which may reintroduce some
         #    points outside of the valid x-domain
-        proj_xyz = src_crs.transform_points(src_crs, x, y)
+        proj_xyz = src_proj.transform_points(src_proj, x, y)
         source_x, source_y = proj_xyz[..., 0], proj_xyz[..., 1]
         #    Detect all the coordinates where the perturbation takes the point
         #    outside of the valid x-domain, and reverse the direction of the
         #    perturbation to fix this.
         eps = 1e-9
         invalid_x = np.logical_or(
-            source_x + x_perturbations < src_crs.x_limits[0]-eps,
-            source_x + x_perturbations > src_crs.x_limits[1]+eps)
+            source_x + x_perturbations < src_proj.x_limits[0]-eps,
+            source_x + x_perturbations > src_proj.x_limits[1]+eps)
         if invalid_x.any():
             x_perturbations[invalid_x] *= -1
             y_perturbations[invalid_x] *= -1
@@ -443,8 +490,8 @@ cdef class CRS:
         #    that will be outside the x-domain when the perturbation is
         #    applied.
         invalid_y = np.logical_or(
-            source_y + y_perturbations < src_crs.y_limits[0]-eps,
-            source_y + y_perturbations > src_crs.y_limits[1]+eps)
+            source_y + y_perturbations < src_proj.y_limits[0]-eps,
+            source_y + y_perturbations > src_proj.y_limits[1]+eps)
         if invalid_y.any():
             x_perturbations[invalid_y] *= -1
             y_perturbations[invalid_y] *= -1
@@ -455,8 +502,8 @@ cdef class CRS:
         #    of the perturbation to get the perturbed point within the valid
         #    domain of the projection, and issue a warning if there are.
         problem_points = np.logical_or(
-            source_x + x_perturbations < src_crs.x_limits[0]-eps,
-            source_x + x_perturbations > src_crs.x_limits[1]+eps)
+            source_x + x_perturbations < src_proj.x_limits[0]-eps,
+            source_x + x_perturbations > src_proj.x_limits[1]+eps)
         if problem_points.any():
             warnings.warn('Some vectors at source domain corners '
                           'may not have been transformed correctly')
@@ -464,7 +511,7 @@ cdef class CRS:
         #    find the angle between the base point and the perturbed point
         #    in the projection coordinates (reversing the direction at any
         #    points where the original was reversed in step 3).
-        proj_xyz = self.transform_points(src_crs,
+        proj_xyz = self.transform_points(src_proj,
                                          source_x + x_perturbations,
                                          source_y + y_perturbations)
         target_x_perturbed = proj_xyz[..., 0]
@@ -482,16 +529,16 @@ cdef class CRS:
 
 class Geodetic(CRS):
     """
-    Defines a latitude/longitude coordinate system with spherical topology,
+    Define a latitude/longitude coordinate system with spherical topology,
     geographical distance and coordinates are measured in degrees.
 
     """
     def __init__(self, globe=None):
         """
-        Kwargs:
-
-            * globe - A :class:`cartopy.crs.Globe`.
-                      Defaults to a "WGS84" datum.
+        Parameters
+        ----------
+        globe: A :class:`cartopy.crs.Globe`, optional
+            Defaults to a "WGS84" datum.
 
         """
         proj4_params = [('proj', 'lonlat')]
@@ -504,16 +551,16 @@ class Geodetic(CRS):
 
 class Geocentric(CRS):
     """
-    Defines a Geocentric coordinate system, where x, y, z are Cartesian
+    Define a Geocentric coordinate system, where x, y, z are Cartesian
     coordinates from the center of the Earth.
 
     """
     def __init__(self, globe=None):
         """
-        Kwargs:
-
-            * globe - A :class:`cartopy.crs.Globe`.
-                      Defaults to a "WGS84" datum.
+        Parameters
+        ----------
+        globe: A :class:`cartopy.crs.Globe`, optional
+            Defaults to a "WGS84" datum.
 
         """
         proj4_params = [('proj', 'geocent')]

@@ -1,4 +1,10 @@
-__tags__ = ['Miscellanea']
+"""
+Cartopy Favicon
+---------------
+
+The actual code to generate cartopy's favicon.
+
+"""
 import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
 import matplotlib.textpath
@@ -8,8 +14,8 @@ import numpy as np
 
 
 def main():
-    plt.figure(figsize=[8, 8])
-    ax = plt.axes(projection=ccrs.SouthPolarStereo())
+    fig = plt.figure(figsize=[8, 8])
+    ax = fig.add_subplot(1, 1, 1, projection=ccrs.SouthPolarStereo())
 
     ax.coastlines()
     ax.gridlines()
@@ -18,7 +24,7 @@ def main():
 
     def on_draw(event=None):
         """
-        Hooks into matplotlib's event mechanism to define the clip path of the
+        Hook into matplotlib's event mechanism to define the clip path of the
         background image.
 
         """
@@ -27,7 +33,7 @@ def main():
                          transform=ax.background_patch.get_transform())
 
     # Register the on_draw method and call it once now.
-    plt.gcf().canvas.mpl_connect('draw_event', on_draw)
+    fig.canvas.mpl_connect('draw_event', on_draw)
     on_draw()
 
     # Generate a matplotlib path representing the character "C".

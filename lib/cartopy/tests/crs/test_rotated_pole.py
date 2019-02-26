@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2014 - 2016, Met Office
+# (C) British Crown Copyright 2014 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -21,27 +21,15 @@ Tests for the Rotated Geodetic coordinate system.
 
 from __future__ import (absolute_import, division, print_function)
 
-import unittest
-
-from numpy.testing import assert_almost_equal
-from nose.tools import assert_equal
-
 import cartopy.crs as ccrs
+from .helpers import check_proj_params
 
 
-class TestRotatedGeodetic(unittest.TestCase):
-    def check_proj4_params(self, crs, expected):
-        pro4_params = sorted(crs.proj4_init.split(' +'))
-        assert_equal(expected, pro4_params)
-
-    def test_default(self):
-        geos = ccrs.RotatedGeodetic(30, 15, 27)
-        expected = ['+datum=WGS84', 'ellps=WGS84', 'lon_0=210', 'no_defs',
-                    'o_lat_p=15', 'o_lon_p=27', 'o_proj=latlon',
-                    'proj=ob_tran', 'to_meter=0.0174532925199433']
-        self.check_proj4_params(geos, expected)
+common_other_args = {'o_proj=latlon', 'to_meter=0.0174532925199433'}
 
 
-if __name__ == '__main__':
-    import nose
-    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)
+def test_default():
+    geos = ccrs.RotatedGeodetic(30, 15, 27)
+    other_args = {'datum=WGS84', 'ellps=WGS84', 'lon_0=210', 'o_lat_p=15',
+                  'o_lon_p=27'} | common_other_args
+    check_proj_params('ob_tran', geos, other_args)

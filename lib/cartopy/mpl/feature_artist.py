@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -22,13 +22,16 @@ This module defines the :class:`FeatureArtist` class, for drawing
 
 from __future__ import (absolute_import, division, print_function)
 
+from collections import OrderedDict
 import warnings
 import weakref
 
+import numpy as np
 import matplotlib.artist
 import matplotlib.collections
 
 import cartopy.mpl.patch as cpatch
+from .style import merge as style_merge, finalize as style_finalize
 
 
 class _GeomKey(object):
@@ -51,6 +54,21 @@ class _GeomKey(object):
         return hash(self._id)
 
 
+def _freeze(obj):
+    """
+    Recursively freeze the given object so that it might be suitable for
+    use as a hashable.
+
+    """
+    if isinstance(obj, dict):
+        obj = frozenset(((k, _freeze(v)) for k, v in obj.items()))
+    elif isinstance(obj, list):
+        obj = tuple(_freeze(item) for item in obj)
+    elif isinstance(obj, np.ndarray):
+        obj = tuple(obj)
+    return obj
+
+
 class FeatureArtist(matplotlib.artist.Artist):
     """
     A subclass of :class:`~matplotlib.artist.Artist` capable of
@@ -61,13 +79,13 @@ class FeatureArtist(matplotlib.artist.Artist):
     _geom_key_to_geometry_cache = weakref.WeakValueDictionary()
     """
     A mapping from _GeomKey to geometry to assist with the caching of
-    transformed matplotlib paths.
+    transformed Matplotlib paths.
 
     """
     _geom_key_to_path_cache = weakref.WeakKeyDictionary()
     """
     A nested mapping from geometry (converted to a _GeomKey) and target
-    projection to the resulting transformed matplotlib paths::
+    projection to the resulting transformed Matplotlib paths::
 
         {geom: {target_projection: list_of_paths}}
 
@@ -78,12 +96,18 @@ class FeatureArtist(matplotlib.artist.Artist):
 
     def __init__(self, feature, **kwargs):
         """
-        Args:
+        Parameters
+        ----------
+        feature
+            An instance of :class:`cartopy.feature.Feature` to draw.
+        styler
+            A callable that given a gemometry, returns matplotlib styling
+            parameters.
 
-        * feature:
-            an instance of :class:`cartopy.feature.Feature` to draw.
-        * kwargs:
-            keyword arguments to be used when drawing the feature. These
+        Other Parameters
+        ----------------
+        **kwargs
+            Keyword arguments to be used when drawing the feature. These
             will override those shared with the feature.
 
         """
@@ -91,7 +115,14 @@ class FeatureArtist(matplotlib.artist.Artist):
 
         if kwargs is None:
             kwargs = {}
+        self._styler = kwargs.pop('styler', None)
         self._kwargs = dict(kwargs)
+
+        if 'color' in self._kwargs:
+            # We want the user to be able to override both face and edge
+            # colours if the original feature already supplied it.
+            color = self._kwargs.pop('color')
+            self._kwargs['facecolor'] = self._kwargs['edgecolor'] = color
 
         # Set default zorder so that features are drawn before
         # lines e.g. contours but after images.
@@ -114,7 +145,7 @@ class FeatureArtist(matplotlib.artist.Artist):
     @matplotlib.artist.allow_rasterization
     def draw(self, renderer, *args, **kwargs):
         """
-        Draws the geometries of the feature that intersect with the extent of
+        Draw the geometries of the feature that intersect with the extent of
         the :class:`cartopy.mpl.GeoAxes` instance to which this
         object has been added.
 
@@ -133,8 +164,16 @@ class FeatureArtist(matplotlib.artist.Artist):
             warnings.warn('Unable to determine extent. Defaulting to global.')
         geoms = self._feature.intersecting_geometries(extent)
 
+        # Combine all the keyword args in priority order.
+        prepared_kwargs = style_merge(
+                self._feature.kwargs, self._kwargs, kwargs)
+
+        # Freeze the kwargs so that we can use them as a dict key. We will
+        # need to unfreeze this with dict(frozen) before passing to mpl.
+        prepared_kwargs = _freeze(prepared_kwargs)
+
         # Project (if necessary) and convert geometries to matplotlib paths.
-        paths = []
+        stylised_paths = OrderedDict()
         key = ax.projection
         for geom in geoms:
             # As Shapely geometries cannot be relied upon to be
@@ -162,17 +201,29 @@ class FeatureArtist(matplotlib.artist.Artist):
                     projected_geom = geom
                 geom_paths = cpatch.geos_to_path(projected_geom)
                 mapping[key] = geom_paths
-            paths.extend(geom_paths)
 
-        # Build path collection and draw it.
+            if not self._styler:
+                style = prepared_kwargs
+            else:
+                # Unfreeze, then add the computed style, and then re-freeze.
+                style = style_merge(dict(prepared_kwargs), self._styler(geom))
+                style = _freeze(style)
+
+            stylised_paths.setdefault(style, []).extend(geom_paths)
+
         transform = ax.projection._as_mpl_transform(ax)
-        # Combine all the keyword args in priority order
-        final_kwargs = dict(self._feature.kwargs)
-        final_kwargs.update(self._kwargs)
-        final_kwargs.update(kwargs)
-        c = matplotlib.collections.PathCollection(paths,
-                                                  transform=transform,
-                                                  **final_kwargs)
-        c.set_clip_path(ax.patch)
-        c.set_figure(ax.figure)
-        return c.draw(renderer)
+
+        # Draw one PathCollection per style. We could instead pass an array
+        # of style items through to a single PathCollection, but that
+        # complexity does not yet justify the effort.
+        for style, paths in stylised_paths.items():
+            style = style_finalize(dict(style))
+            # Build path collection and draw it.
+            c = matplotlib.collections.PathCollection(
+                    paths, transform=transform, **style)
+            c.set_clip_path(ax.patch)
+            c.set_figure(ax.figure)
+            c.draw(renderer)
+
+        # n.b. matplotlib.collection.Collection.draw returns None
+        return None

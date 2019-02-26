@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -19,20 +19,20 @@ from __future__ import (absolute_import, division, print_function)
 
 import operator
 import os
-import unittest
 
-import matplotlib
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
+import pytest
 
 from cartopy import config
-from cartopy.tests.mpl import ImageTesting
+from cartopy.tests.mpl import MPL_VERSION, ImageTesting
 import cartopy.crs as ccrs
 import cartopy.img_transform as im_trans
 from functools import reduce
 
 
-class TestRegrid(unittest.TestCase):
+class TestRegrid(object):
     def test_array_dims(self):
         # Source data
         source_nx = 100
@@ -59,9 +59,9 @@ class TestRegrid(unittest.TestCase):
                                     target_proj, target_x, target_y)
 
         # Check dimensions of return array
-        self.assertEqual(new_array.shape, target_x.shape)
-        self.assertEqual(new_array.shape, target_y.shape)
-        self.assertEqual(new_array.shape, (target_ny, target_nx))
+        assert new_array.shape == target_x.shape
+        assert new_array.shape == target_y.shape
+        assert new_array.shape == (target_ny, target_nx)
 
     def test_different_dims(self):
         # Source data
@@ -86,12 +86,24 @@ class TestRegrid(unittest.TestCase):
         target_proj = ccrs.PlateCarree()
 
         # Attempt regrid
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             im_trans.regrid(data, source_x, source_y, source_cs,
                             target_proj, target_x, target_y)
 
 
-@ImageTesting(['regrid_image'], tolerance=0.4)
+if MPL_VERSION < '2':
+    # Changes in zooming in old versions.
+    regrid_tolerance = 2.5
+elif '2.0.1' <= MPL_VERSION:
+    # Bug in latest Matplotlib that we don't consider correct.
+    regrid_tolerance = 4.75
+else:
+    regrid_tolerance = 0
+
+
+@pytest.mark.natural_earth
+@ImageTesting(['regrid_image'],
+              tolerance=regrid_tolerance)
 def test_regrid_image():
     # Source data
     fname = os.path.join(config["repo_data_dir"], 'raster', 'natural_earth',
@@ -117,25 +129,20 @@ def test_regrid_image():
                                 target_proj, target_x, target_y)
 
     # Plot
-    fig = plt.figure(figsize=(10, 10))
-    gs = matplotlib.gridspec.GridSpec(nrows=4, ncols=1,
-                                      hspace=1.5, wspace=0.5)
+    plt.figure(figsize=(10, 10))
+    gs = mpl.gridspec.GridSpec(nrows=4, ncols=1,
+                               hspace=1.5, wspace=0.5)
     # Set up axes and title
-    ax = plt.subplot(gs[0], frameon=False, projection=target_proj)
+    ax = plt.subplot(gs[0], projection=target_proj)
     plt.imshow(new_array, origin='lower', extent=target_extent)
     ax.coastlines()
     # Plot each color slice (tests masking)
     cmaps = {'red': 'Reds', 'green': 'Greens', 'blue': 'Blues'}
     for i, color in enumerate(['red', 'green', 'blue']):
-        ax = plt.subplot(gs[i + 1], frameon=False, projection=target_proj)
+        ax = plt.subplot(gs[i + 1], projection=target_proj)
         plt.imshow(new_array[:, :, i], extent=target_extent, origin='lower',
                    cmap=cmaps[color])
         ax.coastlines()
 
     # Tighten up layout
     gs.tight_layout(plt.gcf())
-
-
-if __name__ == '__main__':
-    import nose
-    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)

@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2013 - 2016, Met Office
+# (C) British Crown Copyright 2013 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -17,21 +17,19 @@
 
 from __future__ import (absolute_import, division, print_function)
 
-import unittest
-
 import numpy as np
 from numpy.testing import assert_almost_equal
-from nose.tools import assert_equal
 
 import cartopy.crs as ccrs
+from .helpers import check_proj_params
 
 
-class TestStereographic(unittest.TestCase):
+class TestStereographic(object):
     def test_default(self):
         stereo = ccrs.Stereographic()
-        expected = ('+ellps=WGS84 +proj=stere +lat_0=0.0 '
-                    '+lon_0=0.0 +x_0=0.0 +y_0=0.0 +no_defs')
-        assert_equal(stereo.proj4_init, expected)
+        other_args = {'ellps=WGS84', 'lat_0=0.0', 'lon_0=0.0', 'x_0=0.0',
+                      'y_0=0.0'}
+        check_proj_params('stere', stereo, other_args)
 
         assert_almost_equal(np.array(stereo.x_limits),
                             [-5e7, 5e7], decimal=4)
@@ -42,9 +40,9 @@ class TestStereographic(unittest.TestCase):
         globe = ccrs.Globe(semimajor_axis=1000, semiminor_axis=500,
                            ellipse=None)
         stereo = ccrs.Stereographic(globe=globe)
-        expected = ('+a=1000 +b=500 +proj=stere +lat_0=0.0 +lon_0=0.0 '
-                    '+x_0=0.0 +y_0=0.0 +no_defs')
-        assert_equal(stereo.proj4_init, expected)
+        other_args = {'a=1000', 'b=500', 'lat_0=0.0', 'lon_0=0.0', 'x_0=0.0',
+                      'y_0=0.0'}
+        check_proj_params('stere', stereo, other_args)
 
         # The limits in this test are sensible values, but are by no means
         # a "correct" answer - they mean that plotting the crs results in a
@@ -55,26 +53,49 @@ class TestStereographic(unittest.TestCase):
                             [-3932.82587779, 3932.82587779], decimal=4)
 
     def test_true_scale(self):
-        # The "true_scale_latitude" parameter to Stereographic appears
-        # meaningless. This test just ensures that the correct proj4
-        # string is being created. (#339)
-        stereo = ccrs.Stereographic(true_scale_latitude=10)
-        expected = ('+ellps=WGS84 +proj=stere +lat_0=0.0 +lon_0=0.0 '
-                    '+x_0=0.0 +y_0=0.0 +lat_ts=10 +no_defs')
-        assert_equal(stereo.proj4_init, expected)
+        # The "true_scale_latitude" parameter only makes sense for
+        # polar stereographic projections (#339 and #455).
+        # For now only the proj string creation is tested
+        # See test_scale_factor for test on projection.
+        globe = ccrs.Globe(ellipse='sphere')
+        stereo = ccrs.NorthPolarStereo(true_scale_latitude=30, globe=globe)
+        other_args = {'ellps=sphere', 'lat_0=90', 'lon_0=0.0', 'lat_ts=30',
+                      'x_0=0.0', 'y_0=0.0'}
+        check_proj_params('stere', stereo, other_args)
+
+    def test_scale_factor(self):
+        # See #455
+        # Use spherical Earth in North Polar Stereographic to check
+        # equivalence between true_scale and scale_factor.
+        # In these conditions a scale factor of 0.75 corresponds exactly to
+        # a standard parallel of 30N.
+        globe = ccrs.Globe(ellipse='sphere')
+        stereo = ccrs.Stereographic(central_latitude=90., scale_factor=0.75,
+                                    globe=globe)
+        other_args = {'ellps=sphere', 'lat_0=90.0', 'lon_0=0.0', 'k_0=0.75',
+                      'x_0=0.0', 'y_0=0.0'}
+        check_proj_params('stere', stereo, other_args)
+
+        # Now test projections
+        lon, lat = 10, 10
+        projected_scale_factor = stereo.transform_point(lon, lat,
+                                                        ccrs.Geodetic())
+
+        # should be equivalent to North Polar Stereo with
+        # true_scale_latitude = 30
+        nstereo = ccrs.NorthPolarStereo(globe=globe, true_scale_latitude=30)
+        projected_true_scale = nstereo.transform_point(lon, lat,
+                                                       ccrs.Geodetic())
+
+        assert projected_true_scale == projected_scale_factor
 
     def test_eastings(self):
         stereo = ccrs.Stereographic()
         stereo_offset = ccrs.Stereographic(false_easting=1234,
                                            false_northing=-4321)
 
-        expected = ('+ellps=WGS84 +proj=stere +lat_0=0.0 +lon_0=0.0 '
-                    '+x_0=1234 +y_0=-4321 +no_defs')
-        assert_equal(stereo_offset.proj4_init, expected)
-        assert_equal(tuple(np.array(stereo.x_limits) + 1234),
-                     stereo_offset.x_limits)
-
-
-if __name__ == '__main__':
-    import nose
-    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)
+        other_args = {'ellps=WGS84', 'lat_0=0.0', 'lon_0=0.0', 'x_0=1234',
+                      'y_0=-4321'}
+        check_proj_params('stere', stereo_offset, other_args)
+        assert (tuple(np.array(stereo.x_limits) + 1234) ==
+                stereo_offset.x_limits)

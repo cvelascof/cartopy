@@ -1,5 +1,7 @@
-__tags__ = ['Miscellanea']
 """
+Tube Stations
+-------------
+
 Produces a map showing London Underground station locations with high
 resolution background imagery provided by OpenStreetMap.
 
@@ -14,7 +16,7 @@ from cartopy.io.img_tiles import OSM
 
 def tube_locations():
     """
-    Returns an (n, 2) array of selected London Tube locations in Ordnance
+    Return an (n, 2) array of selected London Tube locations in Ordnance
     Survey GB coordinates.
 
     Source: http://www.doogal.co.uk/london_stations.php
@@ -37,8 +39,9 @@ def tube_locations():
 def main():
     imagery = OSM()
 
-    ax = plt.axes(projection=imagery.crs)
-    ax.set_extent((-0.14, -0.1, 51.495, 51.515))
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1, projection=imagery.crs)
+    ax.set_extent([-0.14, -0.1, 51.495, 51.515], ccrs.PlateCarree())
 
     # Construct concentric circles and a rectangle,
     # suitable for a London Underground logo.
@@ -55,14 +58,12 @@ def main():
     # Plot the locations twice, first with the red concentric circles,
     # then with the blue rectangle.
     xs, ys = tube_locations().T
-    plt.plot(xs, ys, transform=ccrs.OSGB(),
-             marker=concentric_circle, color='red', markersize=9,
-             linestyle='')
-    plt.plot(xs, ys, transform=ccrs.OSGB(),
-             marker=rectangle, color='blue', markersize=11,
-             linestyle='')
+    ax.plot(xs, ys, transform=ccrs.OSGB(),
+            marker=concentric_circle, color='red', markersize=9, linestyle='')
+    ax.plot(xs, ys, transform=ccrs.OSGB(),
+            marker=rectangle, color='blue', markersize=11, linestyle='')
 
-    plt.title('London underground locations')
+    ax.set_title('London underground locations')
     plt.show()
 
 

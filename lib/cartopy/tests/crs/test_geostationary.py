@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2013 - 2016, Met Office
+# (C) British Crown Copyright 2013 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -21,72 +21,75 @@ Tests for the Geostationary projection.
 
 from __future__ import (absolute_import, division, print_function)
 
-import unittest
-
 from numpy.testing import assert_almost_equal
-from nose.tools import assert_equal
 
 import cartopy.crs as ccrs
+from .helpers import check_proj_params
 
 
-# Note: code here is now shared with the NearsidePerspective test.
-def check_proj4_params(crs, expected):
-    pro4_params = sorted(crs.proj4_init.split(' +'))
-    assert_equal(expected, pro4_params)
-
-
-class GeostationaryTestsMixin(object):
+class TestGeostationary(object):
     test_class = ccrs.Geostationary
     expected_proj_name = 'geos'
 
+    def adjust_expected_params(self, expected):
+        # Only for Geostationary do we expect the sweep parameter
+        if self.expected_proj_name == 'geos':
+            expected.add('sweep=y')
+
     def test_default(self):
         geos = self.test_class()
-        expected = ['+ellps=WGS84', 'h=35785831', 'lat_0=0.0', 'lon_0=0.0',
-                    'no_defs',
-                    'proj={}'.format(self.expected_proj_name),
-                    'units=m', 'x_0=0', 'y_0=0']
-        check_proj4_params(geos, expected)
+        other_args = {'ellps=WGS84', 'h=35785831', 'lat_0=0.0', 'lon_0=0.0',
+                      'units=m', 'x_0=0', 'y_0=0'}
+        self.adjust_expected_params(other_args)
+
+        check_proj_params(self.expected_proj_name, geos, other_args)
 
         assert_almost_equal(geos.boundary.bounds,
-                            (-5372584.78443894, -5372584.78443894,
-                             5372584.78443894, 5372584.78443894),
+                            (-5434177.81588539, -5434177.81588539,
+                             5434177.81588539, 5434177.81588539),
                             decimal=4)
 
-    def test_eccentric_globe(self):
-        globe = ccrs.Globe(semimajor_axis=10000, semiminor_axis=5000,
-                           ellipse=None)
-        geos = self.test_class(satellite_height=50000,
-                               globe=globe)
-        expected = ['+a=10000', 'b=5000', 'h=50000', 'lat_0=0.0', 'lon_0=0.0',
-                    'no_defs',
-                    'proj={}'.format(self.expected_proj_name),
-                    'units=m', 'x_0=0', 'y_0=0']
-        check_proj4_params(geos, expected)
+    def test_low_orbit(self):
+        geos = self.test_class(satellite_height=700000)
+        other_args = {'ellps=WGS84', 'h=700000', 'lat_0=0.0', 'lon_0=0.0',
+                      'units=m', 'x_0=0', 'y_0=0'}
+        self.adjust_expected_params(other_args)
+
+        check_proj_params(self.expected_proj_name, geos, other_args)
 
         assert_almost_equal(geos.boundary.bounds,
-                            (-8257.4338, -4532.9943, 8257.4338, 4532.9943),
+                            (-785616.1189, -785616.1189,
+                             785616.1189, 785616.1189),
+                            decimal=4)
+
+        # Checking that this isn't just a simple elliptical border
+        assert_almost_equal(geos.boundary.coords[7],
+                            (697323.205, -453041.0626),
                             decimal=4)
 
     def test_eastings(self):
         geos = self.test_class(false_easting=5000000,
                                false_northing=-125000,)
-        expected = ['+ellps=WGS84', 'h=35785831', 'lat_0=0.0', 'lon_0=0.0',
-                    'no_defs',
-                    'proj={}'.format(self.expected_proj_name),
-                    'units=m', 'x_0=5000000',
-                    'y_0=-125000']
-        check_proj4_params(geos, expected)
+        other_args = {'ellps=WGS84', 'h=35785831', 'lat_0=0.0', 'lon_0=0.0',
+                      'units=m', 'x_0=5000000', 'y_0=-125000'}
+        self.adjust_expected_params(other_args)
+
+        check_proj_params(self.expected_proj_name, geos, other_args)
 
         assert_almost_equal(geos.boundary.bounds,
-                            (-372584.78443894, -5497584.78443894,
-                             10372584.78443894, 5247584.78443894),
+                            (-434177.81588539, -5559177.81588539,
+                             10434177.81588539, 5309177.81588539),
                             decimal=4)
 
+    def test_sweep(self):
+        geos = ccrs.Geostationary(sweep_axis='x')
+        other_args = {'ellps=WGS84', 'h=35785831', 'lat_0=0.0', 'lon_0=0.0',
+                      'sweep=x', 'units=m', 'x_0=0', 'y_0=0'}
 
-class TestGeostationary(unittest.TestCase, GeostationaryTestsMixin):
-    pass
+        check_proj_params(self.expected_proj_name, geos, other_args)
 
+        pt = geos.transform_point(-60, 25, ccrs.PlateCarree())
 
-if __name__ == '__main__':
-    import nose
-    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)
+        assert_almost_equal(pt,
+                            (-4529521.6442, 2437479.4195),
+                            decimal=4)

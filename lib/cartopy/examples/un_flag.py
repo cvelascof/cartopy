@@ -1,6 +1,13 @@
-__tags__ = ['Miscellanea']
+"""
+UN Flag
+-------
+
+A demonstration of the power of Matplotlib combined with cartopy's Azimuthal
+Equidistant projection to reproduce the UN flag.
+
+"""
 import cartopy.crs as ccrs
-import cartopy.feature
+import cartopy.feature as cfeature
 import matplotlib.pyplot as plt
 from matplotlib.patches import PathPatch
 import matplotlib.path
@@ -16,7 +23,7 @@ filled_land = True
 
 def olive_path():
     """
-    Returns a matplotlib path representing a single olive branch from the
+    Return a Matplotlib path representing a single olive branch from the
     UN Flag. The path coordinates were extracted from the SVG at
     https://commons.wikimedia.org/wiki/File:Flag_of_the_United_Nations.svg.
 
@@ -81,7 +88,7 @@ def main():
     blue = '#4b92db'
 
     # We're drawing a flag with a 3:5 aspect ratio.
-    fig = plt.figure(figsize=[10, 6], facecolor=blue)
+    fig = plt.figure(figsize=[7.5, 4.5], facecolor=blue)
     # Put a blue background on the figure.
     blue_background = PathPatch(matplotlib.path.Path.unit_rectangle(),
                                 transform=fig.transFigure, color=blue,
@@ -95,11 +102,10 @@ def main():
 
     # Pick a suitable location for the map (which is in an Azimuthal
     # Equidistant projection).
-    ax = plt.axes([0.25, 0.24, 0.5, 0.54], projection=az_eq)
+    ax = fig.add_axes([0.25, 0.24, 0.5, 0.54], projection=az_eq, frameon=False)
 
-    # The background patch and outline patch are not needed in this example.
+    # The background patch and axes frame are not needed in this example.
     ax.background_patch.set_facecolor('none')
-    ax.outline_patch.set_edgecolor('none')
 
     # We want the map to go down to -60 degrees latitude.
     ax.set_extent([-180, 180, -60, 90], ccrs.PlateCarree())
@@ -113,7 +119,7 @@ def main():
 
     if filled_land:
         ax.add_feature(
-            cartopy.feature.LAND, facecolor='white', edgecolor='none')
+            cfeature.LAND, facecolor='white', edgecolor='none')
     else:
         ax.stock_img()
 

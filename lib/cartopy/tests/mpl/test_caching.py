@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -20,16 +20,13 @@ from __future__ import (absolute_import, division, print_function)
 import gc
 
 import six
-import unittest
 
 try:
     from owslib.wmts import WebMapTileService
 except ImportError as e:
     WebMapTileService = None
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.collections import PatchCollection
-from matplotlib.path import Path
+import pytest
 
 import cartopy.crs as ccrs
 from cartopy.mpl.feature_artist import FeatureArtist
@@ -79,6 +76,7 @@ class CallCounter(object):
         setattr(self.parent, self.function_name, self.orig_fn)
 
 
+@pytest.mark.natural_earth
 def test_coastline_loading_cache():
     # a5caae040ee11e72a62a53100fe5edc355304419 added coastline caching.
     # This test ensures it is working.
@@ -102,6 +100,7 @@ def test_coastline_loading_cache():
     plt.close()
 
 
+@pytest.mark.natural_earth
 def test_shapefile_transform_cache():
     # a5caae040ee11e72a62a53100fe5edc355304419 added shapefile mpl
     # geometry caching based on geometry object id. This test ensures
@@ -188,7 +187,8 @@ def test_contourf_transform_path_counting():
     plt.close()
 
 
-@unittest.skipIf(not _OWSLIB_AVAILABLE, 'OWSLib is unavailable.')
+@pytest.mark.network
+@pytest.mark.skipif(not _OWSLIB_AVAILABLE, reason='OWSLib is unavailable.')
 def test_wmts_tile_caching():
     image_cache = WMTSRasterSource._shared_image_cache
     image_cache.clear()
@@ -237,8 +237,3 @@ def test_wmts_tile_caching():
     del source, wmts, gettile_counter
     gc.collect()
     assert len(image_cache) == 0
-
-
-if __name__ == '__main__':
-    import nose
-    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)

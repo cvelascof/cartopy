@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -17,8 +17,6 @@
 
 from __future__ import (absolute_import, division, print_function)
 
-import tempfile
-
 from matplotlib.testing.decorators import cleanup
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,14 +32,14 @@ def test_extents():
     uk = [-12.5, 4, 49, 60]
     uk_crs = ccrs.Geodetic()
 
-    ax = plt.axes(projection=ccrs.PlateCarree())
+    ax = plt.axes(projection=ccrs.PlateCarree(), label='pc')
     ax.set_extent(uk, crs=uk_crs)
     # enable to see what is going on (and to make sure it is a plot of the uk)
     # ax.coastlines()
     assert_array_almost_equal(ax.viewLim.get_points(),
                               np.array([[-12.5, 49.], [4., 60.]]))
 
-    ax = plt.axes(projection=ccrs.NorthPolarStereo())
+    ax = plt.axes(projection=ccrs.NorthPolarStereo(), label='npstere')
     ax.set_extent(uk, crs=uk_crs)
     # enable to see what is going on (and to make sure it is a plot of the uk)
     # ax.coastlines()
@@ -52,7 +50,7 @@ def test_extents():
 
     # given that we know the PolarStereo coordinates of the UK, try using
     # those in a PlateCarree plot
-    ax = plt.axes(projection=ccrs.PlateCarree())
+    ax = plt.axes(projection=ccrs.PlateCarree(), label='pc')
     ax.set_extent([-1034046, 333263, -4765889, -3345219],
                   crs=ccrs.NorthPolarStereo())
     # enable to see what is going on (and to make sure it is a plot of the uk)
@@ -61,6 +59,26 @@ def test_extents():
                               np.array([[-17.17698577, 48.21879707],
                                         [5.68924381, 60.54218893]])
                               )
+
+
+@cleanup
+def test_get_extent():
+    # tests that getting the extents of a map produces something reasonable.
+    uk = [-12.5, 4, 49, 60]
+    uk_crs = ccrs.PlateCarree()
+
+    ax = plt.axes(projection=ccrs.PlateCarree())
+    ax.set_extent(uk, crs=uk_crs)
+    assert_array_almost_equal(ax.get_extent(uk_crs), uk)
+
+    ax = plt.axes(projection=ccrs.Mercator())
+    ax.set_extent(uk, crs=uk_crs)
+    assert_array_almost_equal(ax.get_extent(uk_crs), uk)
+
+    ax = plt.axes(projection=ccrs.Mercator(min_latitude=uk[2],
+                                           max_latitude=uk[3]))
+    ax.set_extent(uk, crs=uk_crs)
+    assert_array_almost_equal(ax.get_extent(uk_crs), uk, decimal=1)
 
 
 @cleanup
@@ -152,19 +170,13 @@ def test_view_lim_autoscaling():
     plt.close()
 
 
-def test_view_lim_default_global():
+def test_view_lim_default_global(tmpdir):
     ax = plt.axes(projection=ccrs.PlateCarree())
     # The view lim should be the default unit bbox until it is drawn.
     assert_array_almost_equal(ax.viewLim.frozen().get_points(),
                               [[0, 0], [1, 1]])
-    with tempfile.TemporaryFile() as tmp:
-        plt.savefig(tmp)
+    plt.savefig(str(tmpdir.join('view_lim_default_global.png')))
     expected = np.array([[-180, -90], [180, 90]])
     assert_array_almost_equal(ax.viewLim.frozen().get_points(),
                               expected)
     plt.close()
-
-
-if __name__ == '__main__':
-    import nose
-    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)

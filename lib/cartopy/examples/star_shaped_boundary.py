@@ -10,7 +10,6 @@ Notice how changing the projection of the map represents a *projected*
 star shaped boundary.
 
 """
-__tags__ = ['Miscellanea']
 import matplotlib.path as mpath
 import matplotlib.pyplot as plt
 
@@ -18,7 +17,8 @@ import cartopy.crs as ccrs
 
 
 def main():
-    ax = plt.axes([0, 0, 1, 1], projection=ccrs.PlateCarree())
+    fig = plt.figure()
+    ax = fig.add_axes([0, 0, 1, 1], projection=ccrs.PlateCarree())
     ax.coastlines()
 
     # Construct a star in longitudes and latitudes.

@@ -1,4 +1,3 @@
-__tags__ = ['Web services']
 """
 Displaying WMTS tiled map data on an arbitrary projection
 ---------------------------------------------------------
@@ -17,6 +16,7 @@ The imagery was collected by the Suomi National Polar-orbiting Partnership
 and Atmospheric Administration (NOAA).
 
 """
+__tags__ = ['Web services']
 
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
@@ -31,17 +31,19 @@ def plot_city_lights():
     plain_crs = ccrs.PlateCarree()
     rotated_crs = ccrs.RotatedPole(pole_longitude=120.0, pole_latitude=45.0)
 
+    fig = plt.figure()
+
     # Plot WMTS data in a specific region, over a plain lat-lon map.
-    ax = plt.subplot(121, projection=plain_crs)
-    ax.set_extent((-6, 3, 48, 58), crs=ccrs.PlateCarree())
+    ax = fig.add_subplot(1, 2, 1, projection=plain_crs)
+    ax.set_extent([-6, 3, 48, 58], crs=ccrs.PlateCarree())
     ax.coastlines(resolution='50m', color='yellow')
     ax.gridlines(color='lightgrey', linestyle='-')
     # Add WMTS imaging.
     ax.add_wmts(base_uri, layer_name=layer_name)
 
     # Plot WMTS data on a rotated map, over the same nominal region.
-    ax = plt.subplot(122, projection=rotated_crs)
-    ax.set_extent((-6, 3, 48, 58), crs=plain_crs)
+    ax = fig.add_subplot(1, 2, 2, projection=rotated_crs)
+    ax.set_extent([-6, 3, 48, 58], crs=ccrs.PlateCarree())
     ax.coastlines(resolution='50m', color='yellow')
     ax.gridlines(color='lightgrey', linestyle='-')
     # Add WMTS imaging.

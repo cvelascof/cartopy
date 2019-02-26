@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with cartopy.  If not, see <https://www.gnu.org/licenses/>.
 """
-Provides shapely geometry <-> matplotlib path support.
+Provide shapely geometry <-> matplotlib path support.
 
 
 See also `Shapely Geometric Objects <see_also_shapely>`_
@@ -29,22 +29,23 @@ and `Matplotlib Path API <http://matplotlib.org/api/path_api.html>`_.
 from __future__ import (absolute_import, division, print_function)
 
 import numpy as np
-import matplotlib.path
+import matplotlib
 from matplotlib.path import Path
 import shapely.geometry as sgeom
 
 
 def geos_to_path(shape):
     """
-    Creates a list of :class:`matplotlib.path.Path` objects that describe
+    Create a list of :class:`matplotlib.path.Path` objects that describe
     a shape.
 
-    Args:
-
-    * shape
+    Parameters
+    ----------
+    shape
         A list, tuple or single instance of any of the following
         types: :class:`shapely.geometry.point.Point`,
         :class:`shapely.geometry.linestring.LineString`,
+        :class:`shapely.geometry.linestring.LinearRing`,
         :class:`shapely.geometry.polygon.Polygon`,
         :class:`shapely.geometry.multipoint.MultiPoint`,
         :class:`shapely.geometry.multipolygon.MultiPolygon`,
@@ -52,7 +53,9 @@ def geos_to_path(shape):
         :class:`shapely.geometry.collection.GeometryCollection`,
         or any type with a _as_mpl_path() method.
 
-    Returns:
+    Returns
+    -------
+    paths
         A list of :class:`matplotlib.path.Path` objects.
 
     """
@@ -62,12 +65,15 @@ def geos_to_path(shape):
             paths.extend(geos_to_path(shp))
         return paths
 
-    if isinstance(shape, (sgeom.LineString, sgeom.Point)):
-        return [Path(np.vstack(shape.xy).T)]
+    if isinstance(shape, sgeom.LinearRing):
+        return [Path(np.column_stack(shape.xy), closed=True)]
+    elif isinstance(shape, (sgeom.LineString, sgeom.Point)):
+        return [Path(np.column_stack(shape.xy))]
     elif isinstance(shape, sgeom.Polygon):
         def poly_codes(poly):
             codes = np.ones(len(poly.xy[0])) * Path.LINETO
             codes[0] = Path.MOVETO
+            codes[-1] = Path.CLOSEPOLY
             return codes
         if shape.is_empty:
             return []
@@ -90,75 +96,57 @@ def geos_to_path(shape):
         raise ValueError('Unsupported shape type {}.'.format(type(shape)))
 
 
-def path_segments(path, transform=None, remove_nans=False, clip=None,
-                  quantize=False, simplify=False, curves=False,
-                  stroke_width=1.0, snap=False):
+def path_segments(path, **kwargs):
     """
-    Creates an array of vertices and a corresponding array of codes from a
+    Create an array of vertices and a corresponding array of codes from a
     :class:`matplotlib.path.Path`.
 
-    Args:
-
-    * path
+    Parameters
+    ----------
+    path
         A :class:`matplotlib.path.Path` instance.
 
-    Kwargs:
+    Other Parameters
+    ----------------
+    kwargs
         See :func:`matplotlib.path.iter_segments` for details of the keyword
         arguments.
 
-    Returns:
+    Returns
+    -------
+    vertices, codes
         A (vertices, codes) tuple, where vertices is a numpy array of
         coordinates, and codes is a numpy array of matplotlib path codes.
         See :class:`matplotlib.path.Path` for information on the types of
         codes and their meanings.
 
     """
-    # XXX assigned to avoid a ValueError inside the mpl C code...
-    a = transform, remove_nans, clip, quantize, simplify, curves
-
-    # Series of cleanups and conversions to the path e.g. it
-    # can convert curved segments to line segments.
-    vertices, codes = matplotlib.path.cleanup_path(path, transform,
-                                                   remove_nans, clip,
-                                                   snap, stroke_width,
-                                                   simplify, curves)
-
-    # Remove the final vertex (with code 0)
-    return vertices[:-1, :], codes[:-1]
-
-
-# Matplotlib v1.3+ deprecates the use of matplotlib.path.cleanup_path. Instead
-# there is a method on a Path instance to simplify this.
-if hasattr(matplotlib.path.Path, 'cleaned'):
-    _path_segments_doc = path_segments.__doc__
-
-    def path_segments(path, **kwargs):
-        pth = path.cleaned(**kwargs)
-        return pth.vertices[:-1, :], pth.codes[:-1]
-
-    path_segments.__doc__ = _path_segments_doc
+    pth = path.cleaned(**kwargs)
+    return pth.vertices[:-1, :], pth.codes[:-1]
 
 
 def path_to_geos(path, force_ccw=False):
     """
-    Creates a list of Shapely geometric objects from a
+    Create a list of Shapely geometric objects from a
     :class:`matplotlib.path.Path`.
 
-    Args:
-
-    * path
+    Parameters
+    ----------
+    path
         A :class:`matplotlib.path.Path` instance.
 
-    Kwargs:
-
-    * force_ccw
+    Other Parameters
+    ----------------
+    force_ccw
         Boolean flag determining whether the path can be inverted to enforce
-        ccw.
+        ccw. Defaults to False.
 
-    Returns:
-        A list of :class:`shapely.geometry.polygon.Polygon`,
+    Returns
+    -------
+    A list of instances of the following type(s):
+        :class:`shapely.geometry.polygon.Polygon`,
         :class:`shapely.geometry.linestring.LineString` and/or
-        :class:`shapely.geometry.multilinestring.MultiLineString` instances.
+        :class:`shapely.geometry.multilinestring.MultiLineString`.
 
     """
     # Convert path into numpy array of vertices (and associated codes)
@@ -179,19 +167,17 @@ def path_to_geos(path, force_ccw=False):
         if len(path_verts) == 0:
             continue
 
-        # XXX A path can be given which does not end with close poly, in that
-        # situation, we have to guess?
         verts_same_as_first = np.all(path_verts[0, :] == path_verts[1:, :],
                                      axis=1)
         if all(verts_same_as_first):
             geom = sgeom.Point(path_verts[0, :])
-        elif (path_verts.shape[0] > 2 and
-                (path_codes[-1] == Path.CLOSEPOLY or
-                 verts_same_as_first[-1])):
-            if path_codes[-1] == Path.CLOSEPOLY:
-                geom = sgeom.Polygon(path_verts[:-1, :])
-            else:
-                geom = sgeom.Polygon(path_verts)
+        elif path_verts.shape[0] > 4 and path_codes[-1] == Path.CLOSEPOLY:
+            geom = sgeom.Polygon(path_verts[:-1, :])
+        elif (matplotlib.__version__ < '2.2.0' and
+                # XXX A path can be given which does not end with close poly,
+                # in that situation, we have to guess?
+                path_verts.shape[0] > 3 and verts_same_as_first[-1]):
+            geom = sgeom.Polygon(path_verts)
         else:
             geom = sgeom.LineString(path_verts)
 

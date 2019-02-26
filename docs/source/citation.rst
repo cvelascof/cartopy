@@ -13,7 +13,7 @@ For example::
 
  @manual{Cartopy,
  author = {{Met Office}},
- title = {Cartopy: a cartographic python library with a matplotlib interface},
+ title = {Cartopy: a cartographic python library with a Matplotlib interface},
  year = {2010 - 2015},
  address = {Exeter, Devon },
  url = {http://scitools.org.uk/cartopy}
@@ -41,10 +41,10 @@ For example::
 
  Cartopy. Met Office. git@github.com:SciTools/cartopy.git. 2015-02-18. 7b2242e.
 
-.. _How to cite and describe software: http://software.ac.uk/so-exactly-what-software-did-you-use
+.. _How to cite and describe software: https://software.ac.uk/so-exactly-what-software-did-you-use
 
 
-.. [Jackson] Jackson, M. 2012. `How to cite and describe software`_. Accessed 2013-03-06.
+[Jackson] Jackson, M. 2012. `How to cite and describe software`_. Accessed 2013-03-06.
 
 
 .. _referencing_copyright:
@@ -60,7 +60,7 @@ Copyright note
 Since basemap data is taken from external sources, it is advised to cite and credit the data provider accordingly.
 
 Some data providers request or at least recommend to include a corresponding note along with the map.
-Depending on the policy, this may either be only the data source and licese or terms of use.
+Depending on the policy, this may either be only the data source and license or terms of use.
 
 The corresponding information for the data providers included in cartopy is listed in the :ref:`data_copyright_table`:
 

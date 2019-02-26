@@ -12,6 +12,7 @@ cartopy into a global Miller map.
 
 """
 __tags__ = ["Scalar data"]
+
 try:
     from urllib2 import urlopen
 except ImportError:
@@ -44,16 +45,19 @@ def geos_image():
     img_handle = BytesIO(urlopen(url).read())
     img = plt.imread(img_handle)
     img_proj = ccrs.Geostationary(satellite_height=35786000)
-    img_extent = (-5500000, 5500000, -5500000, 5500000)
+    img_extent = [-5500000, 5500000, -5500000, 5500000]
     return img, img_proj, img_extent, 'upper'
 
 
 def main():
-    ax = plt.axes(projection=ccrs.Miller())
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1, projection=ccrs.Miller())
     ax.coastlines()
     ax.set_global()
+    print('Retrieving image...')
     img, crs, extent, origin = geos_image()
-    plt.imshow(img, transform=crs, extent=extent, origin=origin, cmap='gray')
+    print('Projecting and plotting image (this may take a while)...')
+    ax.imshow(img, transform=crs, extent=extent, origin=origin, cmap='gray')
     plt.show()
 
 

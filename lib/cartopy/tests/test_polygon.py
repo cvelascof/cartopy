@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -17,9 +17,8 @@
 
 from __future__ import (absolute_import, division, print_function)
 
-import unittest
-
 import numpy as np
+import pytest
 import shapely.geometry as sgeom
 import shapely.wkt
 
@@ -27,7 +26,7 @@ import shapely.wkt
 import cartopy.crs as ccrs
 
 
-class TestBoundary(unittest.TestCase):
+class TestBoundary(object):
     def test_no_polygon_boundary_reversal(self):
         # Check that polygons preserve their clockwise or counter-clockwise
         # ordering when they are attached to the boundary.
@@ -37,7 +36,7 @@ class TestBoundary(unittest.TestCase):
         projection = ccrs.Robinson(170.5)
         multi_polygon = projection.project_geometry(polygon)
         for polygon in multi_polygon:
-            self.assertTrue(polygon.is_valid)
+            assert polygon.is_valid
 
     def test_polygon_boundary_attachment(self):
         # Check the polygon is attached to the boundary even when no
@@ -47,7 +46,7 @@ class TestBoundary(unittest.TestCase):
         projection = ccrs.Robinson(170.6)
         # This will raise an exception if the polygon/boundary intersection
         # fails.
-        multi_polygon = projection.project_geometry(polygon)
+        projection.project_geometry(polygon)
 
     def test_out_of_bounds(self):
         # Check that a polygon that is completely out of the map boundary
@@ -69,14 +68,14 @@ class TestBoundary(unittest.TestCase):
         for coords, expected_polys in polys:
             polygon = sgeom.Polygon(coords)
             multi_polygon = projection.project_geometry(polygon)
-            self.assertEqual(len(multi_polygon), expected_polys)
+            assert len(multi_polygon) == expected_polys
 
 
-class TestMisc(unittest.TestCase):
+class TestMisc(object):
     def test_misc(self):
         projection = ccrs.TransverseMercator(central_longitude=-90)
         polygon = sgeom.Polygon([(-10, 30), (10, 60), (10, 50)])
-        multi_polygon = projection.project_geometry(polygon)
+        projection.project_geometry(polygon)
 
     def test_small(self):
         projection = ccrs.Mercator()
@@ -86,8 +85,8 @@ class TestMisc(unittest.TestCase):
             (-179.9173693847652942, -16.5017831356493616),
         ])
         multi_polygon = projection.project_geometry(polygon)
-        self.assertEqual(len(multi_polygon), 1)
-        self.assertEqual(len(multi_polygon[0].exterior.coords), 4)
+        assert len(multi_polygon) == 1
+        assert len(multi_polygon[0].exterior.coords) == 4
 
     def test_former_infloop_case(self):
         # test a polygon which used to get stuck in an infinite loop
@@ -103,7 +102,7 @@ class TestMisc(unittest.TestCase):
 
         multi_polygon = target_projection.project_geometry(geom, source_crs)
         # check the result is non-empty
-        self.assertFalse(multi_polygon.is_empty)
+        assert not multi_polygon.is_empty
 
     def test_project_previous_infinite_loop(self):
         mstring1 = shapely.wkt.loads(
@@ -137,14 +136,58 @@ class TestMisc(unittest.TestCase):
         src = ccrs.PlateCarree()
         src._attach_lines_to_boundary(multi_line_strings, True)
 
+    @pytest.mark.parametrize('proj',
+                             [ccrs.InterruptedGoodeHomolosine, ccrs.Mollweide])
+    def test_infinite_loop_bounds(self, proj):
+        # test a polygon which used to get stuck in an infinite loop but is now
+        # erroneously clipped.
+        # see https://github.com/SciTools/cartopy/issues/1131
+
+        # These names are for IGH; effectively the same for Mollweide.
+        bottom = [0., 70.]
+        right = [0., 90.]
+        top = [-180., 90.]
+        left = [-180., 70.]
+        verts = np.array([
+            bottom,
+            right,
+            top,
+            left,
+            bottom,
+        ])
+        bad_path = sgeom.Polygon(verts)
+
+        target = proj()
+        source = ccrs.PlateCarree()
+
+        projected = target.project_geometry(bad_path, source)
+
+        # When transforming segments was broken, the resulting path did not
+        # close, and either filled most of the domain, or a smaller portion
+        # than it should. Check that the bounds match the individual points at
+        # the expected edges.
+        projected_left = target.transform_point(left[0], left[1], source)
+        assert projected.bounds[0] == pytest.approx(projected_left[0],
+                                                    rel=target.threshold)
+        projected_bottom = target.transform_point(bottom[0], bottom[1], source)
+        assert projected.bounds[1] == pytest.approx(projected_bottom[1],
+                                                    rel=target.threshold)
+        projected_right = target.transform_point(right[0], right[1], source)
+        assert projected.bounds[2] == pytest.approx(projected_right[0],
+                                                    rel=target.threshold,
+                                                    abs=1e-8)
+        projected_top = target.transform_point(top[0], top[1], source)
+        assert projected.bounds[3] == pytest.approx(projected_top[1],
+                                                    rel=target.threshold)
+
     def test_3pt_poly(self):
         projection = ccrs.OSGB()
         polygon = sgeom.Polygon([(-1000, -1000),
                                  (-1000, 200000),
                                  (200000, -1000)])
         multi_polygon = projection.project_geometry(polygon, ccrs.OSGB())
-        self.assertEqual(len(multi_polygon), 1)
-        self.assertEqual(len(multi_polygon[0].exterior.coords), 4)
+        assert len(multi_polygon) == 1
+        assert len(multi_polygon[0].exterior.coords) == 4
 
     def test_self_intersecting_1(self):
         # Geometry comes from a matplotlib contourf (see #537)
@@ -164,8 +207,8 @@ class TestMisc(unittest.TestCase):
         # Before handling self intersecting interiors, the area would be
         # approximately 13262233761329.
         area = projected.area
-        self.assertTrue(2.2e9 < area < 2.3e9,
-                        msg='Got area {}, expecting ~2.2e9'.format(area))
+        assert 2.2e9 < area < 2.3e9, \
+            'Got area {}, expecting ~2.2e9'.format(area)
 
     def test_self_intersecting_2(self):
         # Geometry comes from a matplotlib contourf (see #509)
@@ -177,7 +220,7 @@ class TestMisc(unittest.TestCase):
         projected = target.project_geometry(geom, source)
         # Before handling self intersecting interiors, the area would be
         # approximately 64808.
-        self.assertTrue(7.9 < projected.area < 8.1)
+        assert 7.9 < projected.area < 8.1
 
     def test_tiny_point_between_boundary_points(self):
         # Geometry comes from #259.
@@ -192,12 +235,33 @@ class TestMisc(unittest.TestCase):
         area = projected.area
         # Before fixing, this geometry used to fill the whole disk. Approx
         # 1.2e14.
-        self.assertTrue(81330 < area < 81340,
-                        msg='Got area {}, expecting ~81336'.format(area))
+        assert 81330 < area < 81340, \
+            'Got area {}, expecting ~81336'.format(area)
+
+    def test_same_points_on_boundary_1(self):
+        source = ccrs.PlateCarree()
+        target = ccrs.PlateCarree(central_longitude=180)
+
+        geom = sgeom.Polygon([(-20, -20), (20, -20), (20, 20), (-20, 20)],
+                             [[(-10, 0), (0, 20), (10, 0), (0, -20)]])
+        projected = target.project_geometry(geom, source)
+
+        assert abs(1200 - projected.area) < 1e-5
+
+    def test_same_points_on_boundary_2(self):
+        source = ccrs.PlateCarree()
+        target = ccrs.PlateCarree(central_longitude=180)
+
+        geom = sgeom.Polygon([(-20, -20), (20, -20), (20, 20), (-20, 20)],
+                             [[(0, 0), (-10, 10), (0, 20), (10, 10)],
+                              [(0, 0), (10, -10), (0, -20), (-10, -10)]])
+        projected = target.project_geometry(geom, source)
+
+        assert abs(1200 - projected.area) < 1e-5
 
 
-class TestQuality(unittest.TestCase):
-    def setUp(self):
+class TestQuality(object):
+    def setup_class(self):
         projection = ccrs.RotatedPole(pole_longitude=177.5,
                                       pole_latitude=37.5)
         polygon = sgeom.Polygon([
@@ -211,7 +275,7 @@ class TestQuality(unittest.TestCase):
 
     def test_split(self):
         # Start simple ... there should be two projected polygons.
-        self.assertEqual(len(self.multi_polygon), 2)
+        assert len(self.multi_polygon) == 2
 
     def test_repeats(self):
         # Make sure we don't have repeated points at the boundary, because
@@ -220,7 +284,7 @@ class TestQuality(unittest.TestCase):
         # Make sure there aren't any repeated points.
         xy = np.array(self.multi_polygon[0].exterior.coords)
         same = (xy[1:] == xy[:-1]).all(axis=1)
-        self.assertFalse(any(same), 'Repeated points in projected geometry.')
+        assert not any(same), 'Repeated points in projected geometry.'
 
     def test_symmetry(self):
         # Make sure the number of points added on the way towards the
@@ -235,22 +299,21 @@ class TestQuality(unittest.TestCase):
 
         # For each region, check if the number of increasing steps is roughly
         # equal to the number of decreasing steps.
-        for i in range(boundary[0], regions.max(), 2):
+        for i in range(int(boundary[0]), regions.max(), 2):
             indices = np.where(regions == i)
             x = xy[indices, 0]
             delta = np.diff(x)
             num_incr = np.count_nonzero(delta > 0)
             num_decr = np.count_nonzero(delta < 0)
-            self.assertLess(abs(num_incr - num_decr), 3,
-                            'Too much asymmetry.')
+            assert abs(num_incr - num_decr) < 3, 'Too much asymmetry.'
 
 
-class PolygonTests(unittest.TestCase):
+class PolygonTests(object):
     def _assert_bounds(self, bounds, x1, y1, x2, y2, delta=1):
-        self.assertAlmostEqual(bounds[0], x1, delta=delta)
-        self.assertAlmostEqual(bounds[1], y1, delta=delta)
-        self.assertAlmostEqual(bounds[2], x2, delta=delta)
-        self.assertAlmostEqual(bounds[3], y2, delta=delta)
+        assert abs(bounds[0] - x1) < delta
+        assert abs(bounds[1] - y1) < delta
+        assert abs(bounds[2] - x2) < delta
+        assert abs(bounds[3] - y2) < delta
 
 
 class TestWrap(PolygonTests):
@@ -261,7 +324,7 @@ class TestWrap(PolygonTests):
         poly = sgeom.box(0, 0, 10, 10)
         multi_polygon = proj.project_geometry(poly, proj)
         # Check the structure
-        self.assertEqual(len(multi_polygon), 1)
+        assert len(multi_polygon) == 1
         # Check the rough shape
         polygon = multi_polygon[0]
         self._assert_bounds(polygon.bounds, 0, 0, 10, 10)
@@ -271,19 +334,22 @@ class TestWrap(PolygonTests):
         poly = sgeom.box(170, 0, 190, 10)
         multi_polygon = proj.project_geometry(poly, proj)
         # Check the structure
-        self.assertEqual(len(multi_polygon), 2)
+        assert len(multi_polygon) == 2
         # Check the rough shape
-        polygon = multi_polygon[0]
-        self._assert_bounds(polygon.bounds, 170, 0, 180, 10)
-        polygon = multi_polygon[1]
-        self._assert_bounds(polygon.bounds, -180, 0, -170, 10)
+        poly1, poly2 = multi_polygon
+        # The order of these polygons is not guaranteed, so figure out
+        # which is appropriate
+        if 170.0 not in poly1.bounds:
+            poly1, poly2 = poly2, poly1
+        self._assert_bounds(poly1.bounds, 170, 0, 180, 10)
+        self._assert_bounds(poly2.bounds, -180, 0, -170, 10)
 
     def test_plate_carree_wrap(self):
         proj = ccrs.PlateCarree()
         poly = sgeom.box(200, 0, 220, 10)
         multi_polygon = proj.project_geometry(poly, proj)
         # Check the structure
-        self.assertEqual(len(multi_polygon), 1)
+        assert len(multi_polygon) == 1
         # Check the rough shape
         polygon = multi_polygon[0]
         self._assert_bounds(polygon.bounds, -160, 0, -140, 10)
@@ -301,8 +367,8 @@ class TestHoles(PolygonTests):
                              [ring(-20, -20, 20, 20, False)])
         multi_polygon = proj.project_geometry(poly)
         # Check the structure
-        self.assertEqual(len(multi_polygon), 1)
-        self.assertEqual(len(multi_polygon[0].interiors), 1)
+        assert len(multi_polygon) == 1
+        assert len(multi_polygon[0].interiors) == 1
         # Check the rough shape
         polygon = multi_polygon[0]
         self._assert_bounds(polygon.bounds, -40, -47, 40, 47)
@@ -314,15 +380,20 @@ class TestHoles(PolygonTests):
                              [ring(-20, -20, 20, 20, False)])
         multi_polygon = proj.project_geometry(poly)
         # Check the structure
-        self.assertEqual(len(multi_polygon), 2)
-        self.assertEqual(len(multi_polygon[0].interiors), 1)
-        self.assertEqual(len(multi_polygon[1].interiors), 0)
+        assert len(multi_polygon) == 2
+
+        poly1, poly2 = multi_polygon
+        # The order of these polygons is not guaranteed, so figure out
+        # which is appropriate
+        if not len(poly1.interiors) == 1:
+            poly1, poly2 = poly2, poly1
+
+        assert len(poly1.interiors) == 1
+        assert len(poly2.interiors) == 0
         # Check the rough shape
-        polygon = multi_polygon[0]
-        self._assert_bounds(polygon.bounds, 110, -47, 180, 47)
-        self._assert_bounds(polygon.interiors[0].bounds, 130, -21, 170, 21)
-        polygon = multi_polygon[1]
-        self._assert_bounds(polygon.bounds, -180, -43, -170, 43)
+        self._assert_bounds(poly1.bounds, 110, -47, 180, 47)
+        self._assert_bounds(poly1.interiors[0].bounds, 130, -21, 170, 21)
+        self._assert_bounds(poly2.bounds, -180, -43, -170, 43)
 
     def test_wrapped_poly_wrapped_hole(self):
         proj = ccrs.PlateCarree(-180)
@@ -330,9 +401,9 @@ class TestHoles(PolygonTests):
                              [ring(-20, -20, 20, 20, False)])
         multi_polygon = proj.project_geometry(poly)
         # Check the structure
-        self.assertEqual(len(multi_polygon), 2)
-        self.assertEqual(len(multi_polygon[0].interiors), 0)
-        self.assertEqual(len(multi_polygon[1].interiors), 0)
+        assert len(multi_polygon) == 2
+        assert len(multi_polygon[0].interiors) == 0
+        assert len(multi_polygon[1].interiors) == 0
         # Check the rough shape
         polygon = multi_polygon[0]
         self._assert_bounds(polygon.bounds, 140, -47, 180, 47)
@@ -345,8 +416,8 @@ class TestHoles(PolygonTests):
                              [[(0, -30), (90, -30), (180, -30), (270, -30)]])
         multi_polygon = proj.project_geometry(poly)
         # Check the structure
-        self.assertEqual(len(multi_polygon), 1)
-        self.assertEqual(len(multi_polygon[0].interiors), 1)
+        assert len(multi_polygon) == 1
+        assert len(multi_polygon[0].interiors) == 1
         # Check the rough shape
         polygon = multi_polygon[0]
         self._assert_bounds(polygon.bounds, -2.4e7, -2.4e7, 2.4e7, 2.4e7, 1e6)
@@ -360,14 +431,14 @@ class TestHoles(PolygonTests):
                                (45, -60), (135, -60)]])
         multi_polygon = proj.project_geometry(poly)
         # Check the structure
-        self.assertEqual(len(multi_polygon), 1)
-        self.assertEqual(len(multi_polygon[0].interiors), 1)
+        assert len(multi_polygon) == 1
+        assert len(multi_polygon[0].interiors) == 1
         # Check the rough shape
         polygon = multi_polygon[0]
         self._assert_bounds(polygon.bounds, -5.0e7, -5.0e7, 5.0e7, 5.0e7, 1e6)
         self._assert_bounds(polygon.interiors[0].bounds,
                             - 1.2e7, -1.2e7, 1.2e7, 1.2e7, 1e6)
-        self.assertAlmostEqual(polygon.area, 7.30e15, delta=1e13)
+        assert abs(polygon.area - 7.30e15) < 1e13
 
     def test_inverted_poly_removed_hole(self):
         proj = ccrs.NorthPolarStereo(globe=ccrs.Globe(ellipse='WGS84'))
@@ -376,14 +447,14 @@ class TestHoles(PolygonTests):
                                (45, -75), (135, -75)]])
         multi_polygon = proj.project_geometry(poly)
         # Check the structure
-        self.assertEqual(len(multi_polygon), 1)
-        self.assertEqual(len(multi_polygon[0].interiors), 1)
+        assert len(multi_polygon) == 1
+        assert len(multi_polygon[0].interiors) == 1
         # Check the rough shape
         polygon = multi_polygon[0]
         self._assert_bounds(polygon.bounds, -5.0e7, -5.0e7, 5.0e7, 5.0e7, 1e6)
         self._assert_bounds(polygon.interiors[0].bounds,
                             - 1.2e7, -1.2e7, 1.2e7, 1.2e7, 1e6)
-        self.assertAlmostEqual(polygon.area, 7.34e15, delta=1e13)
+        assert abs(polygon.area - 7.34e15) < 1e13
 
     def test_multiple_interiors(self):
         exterior = ring(0, 0, 12, 12, True)
@@ -395,7 +466,3 @@ class TestHoles(PolygonTests):
         source = ccrs.Geodetic()
 
         assert len(list(target.project_geometry(poly, source))) == 1
-
-
-if __name__ == '__main__':
-    unittest.main()

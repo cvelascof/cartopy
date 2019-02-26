@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2015 - 2016, Met Office
+# (C) British Crown Copyright 2015 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -14,58 +14,53 @@
 #
 # You should have received a copy of the GNU Lesser General Public License
 # along with cartopy.  If not, see <https://www.gnu.org/licenses/>.
+#
+# cython: embedsignature=True
 
 """
-This module defines the Geodesic class which can interface with the Proj.4.
+This module defines the Geodesic class which can interface with the Proj
 geodesic functions.
 
 """
 from cpython.mem cimport PyMem_Malloc
-from cpython.mem cimport PyMem_Realloc
 from cpython.mem cimport PyMem_Free
 import numpy as np
 cimport numpy as np
 cimport cython
 from cython.parallel cimport prange
+import shapely.geometry as sgeom
 
-cdef extern from "geodesic.h":
-    # External imports of Proj4.9 functions
-    cdef struct geod_geodesic:
-        pass
+from ._geodesic cimport geod_geodesic, geod_init, geod_direct, geod_inverse
 
-    ctypedef geod_geodesic* geodesic_t
-
-    void geod_init(geodesic_t, double, double)
-    void geod_direct(geodesic_t, double, double, double, double,
-                     double*, double*, double*) nogil
-    void geod_inverse(geodesic_t, double, double, double, double,
-                      double*, double*, double*) nogil
 
 cdef class Geodesic:
     """
-    Defines an ellipsoid on which to solve geodesic problems.
+    Define an ellipsoid on which to solve geodesic problems.
 
     """
     cdef geod_geodesic* geod
     cdef double radius
     cdef double flattening
 
+    def __init__(self, radius=6378137.0, flattening=1/298.257223563):
+        """
+        Parameters
+        ----------
+        radius: float, optional
+            Equatorial radius (metres). Defaults to the WGS84 semimajor axis
+            (6378137.0 metres).
+
+        flattening: float, optional
+            Flattening of ellipsoid.  Setting flattening = 0 gives a sphere.
+            Negative flattening gives a prolate ellipsoid. If flattening > 1,
+            set flattening to 1/flattening.
+            Defaults to the WGS84 flattening (1/298.257223563).
+
+        """
+        # This method exists solely for docstrings. The __cinit__ method is
+        # where the real work happens. Make sure to keep the signatures synced.
+
     def __cinit__(self, radius=6378137.0, flattening=1/298.257223563):
-        """
-        Create an ellipsoid with a given radius and flattening.
-
-        Kwargs:
-
-            * radius  - Equatorial radius (metres). Defaults to the WGS84
-                        semimajor axis (6378137.0 metres).
-
-            * flattening - Flattening of ellipsoid.
-                           Setting flattening = 0 gives a sphere. Negative
-                           flattening gives a prolate ellipsoid. If
-                           flattening > 1, set flattening to 1/flattening.
-                           Defaults to the WGS84 flattening (1/298.257223563).
-
-        """
         # allocate some memory (filled with random data)
         self.geod = <geod_geodesic*> PyMem_Malloc(sizeof(geod_geodesic))
         if not self.geod:
@@ -92,21 +87,22 @@ cdef class Geodesic:
         single start point and distance, an array of different azimuths can be
         supplied to locate multiple endpoints.
 
-        Args:
+        Parameters
+        ----------
+        points: array_like, shape=(n *or* 1, 2)
+            The starting longitude-latitude point(s) from which to travel.
 
-            * points - An n (or 1) by 2 numpy.ndarray, list or tuple of lon-lat
-                       points.
-                       The starting point(s) from which to travel.
+        azimuths: float or array_like with shape=(n, )
+            List of azimuth values (degrees).
 
-            * azimuths - A length n (or 1) numpy.ndarray or list of azimuth
-                         values (degrees).
+        distances : float or array_like with shape(n, )
+            List of distances values (metres).
 
-            * distances - A length n (or 1) numpy.ndarray or list of distances
-                          values (metres).
-
-        Returns:
-            An n by 3 np.ndarray of lons, lats, and forward azimuths of the
-            located endpoint(s).
+        Returns
+        -------
+        `numpy.ndarray`, shape=(n, 3)
+            The longitudes, latitudes, and forward azimuths of the located
+            endpoint(s).
 
         """
 
@@ -159,30 +155,36 @@ cdef class Geodesic:
         single start point, an array of different endpoints can be supplied to
         find multiple distances.
 
-        Args:
+        Parameters
+        ----------
+        points: array_like, shape=(n *or* 1, 2)
+            The starting longitude-latitude point(s) from which to travel.
 
-            * points - An n (or 1) by 2 numpy.ndarray, list or tuple of lon-lat
-                       points.
-                       The starting point(s) from which to travel.
+        endpoints: array_like, shape=(n *or* 1, 2)
+            The longitude-latitude point(s) to travel to.
 
-            * endpoints - An n (or 1) by 2 numpy.ndarray, list or tuple of
-                          lon-lat points.
-                          The point(s) to travel to.
-
-        Returns:
-            An n by 3 np.ndarray of distances, and the (forward) azimuths of
-            the start and end points.
+        Returns
+        -------
+        `numpy.ndarray`, shape=(n, 3)
+            The distances, and the (forward) azimuths of the start and end
+            points.
 
         """
 
         cdef int n_points, i
         cdef double[:, :] pts, epts, orig_pts
 
-        # Create numpy arrays from inputs, and ensure correct shape. Note:
-        # reshape(-1) returns a 1D array from a 0 dimensional array as required
-        # for broadcasting.
-        pts = np.array(points, dtype=np.float64).reshape((-1, 2))
-        epts = np.array(endpoints, dtype=np.float64).reshape((-1, 2))
+        # Create numpy arrays from inputs, and ensure correct shape.
+        points = np.array(points, dtype=np.float64)
+        endpoints = np.array(endpoints, dtype=np.float64)
+
+        if points.ndim > 2 or (points.ndim == 2 and points.shape[1] != 2):
+            raise ValueError(
+                'Expecting input points to be (N, 2), got {}'
+                ''.format(points.shape))
+
+        pts = points.reshape((-1, 2))
+        epts = endpoints.reshape((-1, 2))
 
         sizes = [pts.shape[0], epts.shape[0]]
         n_points = max(sizes)
@@ -215,24 +217,23 @@ cdef class Geodesic:
         """
         Find a geodesic circle of given radius at a given point.
 
-        Args:
+        Parameters
+        ----------
+        lon : float
+            Longitude coordinate of the centre.
+        lat : float
+            Latitude coordinate of the centre.
+        radius : float
+            The radius of the circle (metres).
+        n_samples: int, optional
+            Integer number of sample points of circle.
+        endpoint: bool, optional
+            Whether to repeat endpoint at the end of returned array.
 
-            * lon - Longitude coordinate of the centre.
-
-            * lat - Latitude coordinate of the centre.
-
-            * radius - The radius of the circle (metres).
-
-        Kwargs:
-
-            * n_samples - Integer number of sample points of circle.
-
-            * endpoint - Boolean for whether to repeat endpoint at the end of
-                         returned array.
-
-        Returns:
-            An n_samples by 2 np.ndarray of evenly spaced lon-lat points on the
-            circle.
+        Returns
+        -------
+        `numpy.ndarray`, shape=(n_samples, 2)
+            The evenly spaced longitude-latitude points on the circle.
 
         """
 
@@ -246,3 +247,46 @@ cdef class Geodesic:
                                endpoint=endpoint).astype(np.double)
 
         return self.direct(center, azimuths, radius_m)[:, 0:2]
+
+    def geometry_length(self, geometry):
+        """
+        Return the distance (in physical meters) of the given Shapely geometry.
+
+        The geometry is assumed to be in spherical (lon, lat) coordinates.
+
+        Parameters
+        ----------
+        geometry : `shapely.geometry.BaseGeometry`
+            The Shapely geometry to compute the length of. For polygons, the
+            exterior length will be calculated. For multi-part geometries, the
+            sum of the parts will be computed.
+
+        """
+        result = None
+        if hasattr(geometry, 'geoms'):
+            # Multi-geometry.
+            result = sum(self.geometry_length(geom) for geom in geometry.geoms)
+
+        elif hasattr(geometry, 'exterior'):
+            # Polygon.
+            result = self.geometry_length(geometry.exterior)
+
+        elif hasattr(geometry, 'coords'):
+            coords = np.array(geometry.coords)
+
+            # LinearRings are (N, 2), whereas LineStrings are (2, N).
+            if not isinstance(geometry, sgeom.LinearRing):
+                coords = coords.T
+
+            result = self.geometry_length(coords)
+
+        elif isinstance(geometry, np.ndarray):
+            coords = geometry
+            distances, _, _ = np.array(
+                self.inverse(coords[:-1, :], coords[1:, :]).T)
+            result = distances.sum()
+
+        else:
+            raise TypeError('Unhandled type {}'.format(geometry.__class__))
+
+        return result

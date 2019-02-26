@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2019, Met Office
 #
 # This file is part of cartopy.
 #
@@ -17,10 +17,10 @@
 
 from __future__ import (absolute_import, division, print_function)
 
-import numpy as np
 import matplotlib.pyplot as plt
+import pytest
 
-from cartopy.tests.mpl import ImageTesting
+from cartopy.tests.mpl import MPL_VERSION, ImageTesting
 
 
 class ExampleImageTesting(ImageTesting):
@@ -41,12 +41,17 @@ class ExampleImageTesting(ImageTesting):
         return new_fn
 
 
-@ExampleImageTesting(['global_map'])
+@pytest.mark.natural_earth
+@ExampleImageTesting(['global_map'],
+                     tolerance=4 if MPL_VERSION < '2' else 0)
 def test_global_map():
-    import cartopy.examples.global_map as c
-    c.main()
+    import cartopy.examples.global_map as example
+    example.main()
 
 
-if __name__ == '__main__':
-    import nose
-    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)
+@pytest.mark.natural_earth
+@ExampleImageTesting(['contour_label'],
+                     tolerance=7.5 if MPL_VERSION < '2' else 0)
+def test_contour_label():
+    import cartopy.examples.contour_labels as example
+    example.main()

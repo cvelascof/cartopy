@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2019, Met Office
 #
 # This file is part of cartopy.
 #
@@ -33,49 +33,44 @@ import shapely.geometry as sgeom
 from shapely.prepared import prep
 import six
 
-from cartopy._crs import CRS, Geocentric, Geodetic, Globe, PROJ4_VERSION
+from cartopy._crs import (CRS, Geodetic, Globe, PROJ4_VERSION,
+                          WGS84_SEMIMAJOR_AXIS, WGS84_SEMIMINOR_AXIS)
+from cartopy._crs import Geocentric  # noqa: F401 (flake8 = unused import)
 import cartopy.trace
 
 
 __document_these__ = ['CRS', 'Geocentric', 'Geodetic', 'Globe']
 
 
-WGS84_SEMIMAJOR_AXIS = 6378137.0
-WGS84_SEMIMINOR_AXIS = 6356752.3142
-
-
 class RotatedGeodetic(CRS):
     """
-    Defines a rotated latitude/longitude coordinate system with spherical
+    Define a rotated latitude/longitude coordinate system with spherical
     topology and geographical distance.
 
     Coordinates are measured in degrees.
+
+    The class uses proj to perform an ob_tran operation, using the
+    pole_longitude to set a lon_0 then performing two rotations based on
+    pole_latitude and central_rotated_longitude.
+    This is equivalent to setting the new pole to a location defined by
+    the pole_latitude and pole_longitude values in the GeogCRS defined by
+    globe, then rotating this new CRS about it's pole using the
+    central_rotated_longitude value.
 
     """
     def __init__(self, pole_longitude, pole_latitude,
                  central_rotated_longitude=0.0, globe=None):
         """
-        Create a RotatedGeodetic CRS.
-
-        The class uses proj4 to perform an ob_tran operation, using the
-        pole_longitude to set a lon_0 then performing two rotations based on
-        pole_latitude and central_rotated_longitude.
-        This is equivalent to setting the new pole to a location defined by
-        the pole_latitude and pole_longitude values in the GeogCRS defined by
-        globe, then rotating this new CRS about it's pole using the
-        central_rotated_longitude value.
-
-        Args:
-
-            * pole_longitude - Pole longitude position, in unrotated degrees.
-            * pole_latitude - Pole latitude position, in unrotated degrees.
-            * central_rotated_longitude - Longitude rotation about the new
-                                          pole, in degrees.
-
-        Kwargs:
-
-            * globe - An optional :class:`cartopy.crs.Globe`.
-                      Defaults to a "WGS84" datum.
+        Parameters
+        ----------
+        pole_longitude
+            Pole longitude position, in unrotated degrees.
+        pole_latitude
+            Pole latitude position, in unrotated degrees.
+        central_rotated_longitude: optional
+            Longitude rotation about the new pole, in degrees.  Defaults to 0.
+        globe: optional
+            A :class:`cartopy.crs.Globe`.  Defaults to a "WGS84" datum.
 
         """
         proj4_params = [('proj', 'ob_tran'), ('o_proj', 'latlon'),
@@ -89,7 +84,7 @@ class RotatedGeodetic(CRS):
 
 class Projection(six.with_metaclass(ABCMeta, CRS)):
     """
-    Defines a projected coordinate system with flat topology and Euclidean
+    Define a projected coordinate system with flat topology and Euclidean
     distance.
 
     """
@@ -125,7 +120,7 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
         try:
             boundary = self._cw_boundary
         except AttributeError:
-            boundary = sgeom.LineString(self.boundary)
+            boundary = sgeom.LinearRing(self.boundary)
             self._cw_boundary = boundary
         return boundary
 
@@ -134,7 +129,7 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
         try:
             boundary = self._ccw_boundary
         except AttributeError:
-            boundary = sgeom.LineString(self.boundary.coords[::-1])
+            boundary = sgeom.LinearRing(self.boundary.coords[::-1])
             self._ccw_boundary = boundary
         return boundary
 
@@ -146,20 +141,65 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
             domain = self._domain = sgeom.Polygon(self.boundary)
         return domain
 
+    def _determine_longitude_bounds(self, central_longitude):
+        # In new proj, using exact limits will wrap-around, so subtract a
+        # small epsilon:
+        epsilon = 1e-10
+        minlon = -180 + central_longitude
+        maxlon = 180 + central_longitude
+        if central_longitude > 0:
+            maxlon -= epsilon
+        elif central_longitude < 0:
+            minlon += epsilon
+        return minlon, maxlon
+
+    def _repr_html_(self):
+        import cgi
+        try:
+            # As matplotlib is not a core cartopy dependency, don't error
+            # if it's not available.
+            import matplotlib.pyplot as plt
+        except ImportError:
+            # We can't return an SVG of the CRS, so let Jupyter fall back to
+            # a default repr by returning None.
+            return None
+
+        # Produce a visual repr of the Projection instance.
+        fig, ax = plt.subplots(figsize=(5, 3),
+                               subplot_kw={'projection': self})
+        ax.set_global()
+        ax.coastlines('auto')
+        ax.gridlines()
+        buf = six.StringIO()
+        fig.savefig(buf, format='svg', bbox_inches='tight')
+        plt.close(fig)
+        # "Rewind" the buffer to the start and return it as an svg string.
+        buf.seek(0)
+        svg = buf.read()
+        return '{}<pre>{}</pre>'.format(svg, cgi.escape(repr(self)))
+
     def _as_mpl_axes(self):
         import cartopy.mpl.geoaxes as geoaxes
         return geoaxes.GeoAxes, {'map_projection': self}
 
     def project_geometry(self, geometry, src_crs=None):
         """
-        Projects the given geometry into this projection.
+        Project the given geometry into this projection.
 
-        :param geometry: The geometry to (re-)project.
-        :param src_crs: The source CRS, or geodetic CRS if None.
-        :rtype: Shapely geometry.
+        Parameters
+        ----------
+        geometry
+            The geometry to (re-)project.
+        src_crs: optional
+            The source CRS.  Defaults to None.
 
-        If src_crs is None, the source CRS is assumed to be a geodetic
-        version of the target CRS.
+            If src_crs is None, the source CRS is assumed to be a geodetic
+            version of the target CRS.
+
+        Returns
+        -------
+        geometry
+            The projected result (a shapely geometry).
 
         """
         if src_crs is None:
@@ -182,7 +222,7 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
 
     def _project_linear_ring(self, linear_ring, src_crs):
         """
-        Projects the given LinearRing from the src_crs into this CRS and
+        Project the given LinearRing from the src_crs into this CRS and
         returns a list of LinearRings and a single MultiLineString.
 
         """
@@ -299,7 +339,7 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
 
     def _project_polygon(self, polygon, src_crs):
         """
-        Returns the projected polygon(s) derived from the given polygon.
+        Return the projected polygon(s) derived from the given polygon.
 
         """
         # Determine orientation of polygon.
@@ -331,7 +371,7 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
 
     def _attach_lines_to_boundary(self, multi_line_strings, is_ccw):
         """
-        Returns a list of LinearRings by attaching the ends of the given lines
+        Return a list of LinearRings by attaching the ends of the given lines
         to the boundary, paying attention to the traversal directions of the
         lines and boundary.
 
@@ -428,6 +468,11 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
                     ax.text(coords[-1, 0], coords[-1, 1],
                             '{}.'.format(thing.data[0]))
 
+        def filter_last(t):
+            return t.kind or t.data[1] == 'first'
+
+        edge_things = list(filter(filter_last, edge_things))
+
         processed_ls = []
         while remaining_ls:
             # Rename line_string to current_ls
@@ -440,16 +485,6 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
                 print()
                 print('Processing: %s, %s' % (i, current_ls))
 
-            # We only want to consider boundary-points, the starts-and-ends of
-            # all other line-strings, or the start-point of the current
-            # line-string.
-            def filter_fn(t):
-                return (t.kind or
-                        t.data[0] != i or
-                        t.data[1] != 'last')
-
-            edge_things = list(filter(filter_fn, edge_things))
-
             added_linestring = set()
             while True:
                 # Find out how far around this linestring's last
@@ -458,7 +493,7 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
                 d_last = boundary_distance(current_ls.coords[-1])
                 if debug:
                     print('   d_last: {!r}'.format(d_last))
-                next_thing = _find_first_gt(edge_things, d_last)
+                next_thing = _find_first_ge(edge_things, d_last)
                 # Remove this boundary point from the edge.
                 edge_things.remove(next_thing)
                 if debug:
@@ -472,7 +507,7 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
                                        [(boundary_point.x, boundary_point.y)])
                     current_ls = sgeom.LineString(combined_coords)
 
-                elif next_thing.data[0] == i and next_thing.data[1] == 'first':
+                elif next_thing.data[0] == i:
                     # We've gone all the way around and are now back at the
                     # first boundary thing.
                     if debug:
@@ -492,8 +527,6 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
                         remaining_ls.pop(j)
                     coords_to_append = list(line_to_append.coords)
 
-                    if next_thing.data[1] == 'last':
-                        coords_to_append = coords_to_append[::-1]
                     # Build up the linestring.
                     current_ls = sgeom.LineString((list(current_ls.coords) +
                                                    coords_to_append))
@@ -510,10 +543,10 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
                                            're-added. Please raise an issue.')
 
         # filter out any non-valid linear rings
-        processed_ls = [linear_ring for linear_ring in processed_ls if
-                        len(linear_ring.coords) > 2]
-
-        linear_rings = [sgeom.LinearRing(line) for line in processed_ls]
+        linear_rings = [
+            sgeom.LinearRing(linear_ring)
+            for linear_ring in processed_ls
+            if len(linear_ring.coords) > 2 and linear_ring.is_valid]
 
         if debug:
             print('   DONE')
@@ -561,8 +594,9 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
             x4 += bx
             y4 += by
             for ring in interior_rings:
-                polygon = sgeom.Polygon(ring)
-                if polygon.is_valid:
+                # Use shapely buffer in an attempt to fix invalid geometries
+                polygon = sgeom.Polygon(ring).buffer(0)
+                if not polygon.is_empty and polygon.is_valid:
                     x1, y1, x2, y2 = polygon.bounds
                     bx = (x2 - x1) * 0.1
                     by = (y2 - y1) * 0.1
@@ -593,8 +627,8 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
         Where possible, return a vertices array transformed to this CRS from
         the given vertices array of shape ``(n, 2)`` and the source CRS.
 
-        .. important::
-
+        Note
+        ----
             This method may return None to indicate that the vertices cannot
             be transformed quickly, and a more complex geometry transformation
             is required (see :meth:`cartopy.crs.Projection.project_geometry`).
@@ -605,8 +639,10 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
         if self == src_crs:
             x = vertices[:, 0]
             y = vertices[:, 1]
-            x_limits = self.x_limits
-            y_limits = self.y_limits
+            # Extend the limits a tiny amount to allow for precision mistakes
+            epsilon = 1.e-10
+            x_limits = (self.x_limits[0] - epsilon, self.x_limits[1] + epsilon)
+            y_limits = (self.y_limits[0] - epsilon, self.y_limits[1] + epsilon)
             if (x.min() >= x_limits[0] and x.max() <= x_limits[1] and
                     y.min() >= y_limits[0] and y.max() <= y_limits[1]):
                 return_value = vertices
@@ -614,7 +650,7 @@ class Projection(six.with_metaclass(ABCMeta, CRS)):
         return return_value
 
 
-class _RectangularProjection(Projection):
+class _RectangularProjection(six.with_metaclass(ABCMeta, Projection)):
     """
     The abstract superclass of projections with a rectangular domain which
     is symmetric about the origin.
@@ -627,9 +663,8 @@ class _RectangularProjection(Projection):
 
     @property
     def boundary(self):
-        # XXX Should this be a LinearRing?
         w, h = self._half_width, self._half_height
-        return sgeom.LineString([(-w, -h), (-w, h), (w, h), (w, -h), (-w, -h)])
+        return sgeom.LinearRing([(-w, -h), (-w, h), (w, h), (w, -h), (-w, -h)])
 
     @property
     def x_limits(self):
@@ -640,7 +675,8 @@ class _RectangularProjection(Projection):
         return (-self._half_height, self._half_height)
 
 
-class _CylindricalProjection(_RectangularProjection):
+class _CylindricalProjection(six.with_metaclass(ABCMeta,
+                                                _RectangularProjection)):
     """
     The abstract class which denotes cylindrical projections where we
     want to allow x values to wrap around.
@@ -650,16 +686,16 @@ class _CylindricalProjection(_RectangularProjection):
 
 def _ellipse_boundary(semimajor=2, semiminor=1, easting=0, northing=0, n=201):
     """
-    Defines a projection boundary using an ellipse.
+    Define a projection boundary using an ellipse.
 
     This type of boundary is used by several projections.
 
     """
 
-    t = np.linspace(0, 2 * np.pi, n)
+    t = np.linspace(0, -2 * np.pi, n)  # Clockwise boundary.
     coords = np.vstack([semimajor * np.cos(t), semiminor * np.sin(t)])
     coords += ([easting], [northing])
-    return coords[:, ::-1]
+    return coords
 
 
 class PlateCarree(_CylindricalProjection):
@@ -681,7 +717,7 @@ class PlateCarree(_CylindricalProjection):
 
     def _bbox_and_offset(self, other_plate_carree):
         """
-        Returns a pair of (xmin, xmax) pairs and an offset which can be used
+        Return a pair of (xmin, xmax) pairs and an offset which can be used
         for identification of whether data in ``other_plate_carree`` needs
         to be transformed to wrap appropriately.
 
@@ -696,8 +732,8 @@ class PlateCarree(_CylindricalProjection):
         The returned values are longitudes in ``other_plate_carree``'s
         coordinate system.
 
-        .. important::
-
+        Warning
+        -------
             The two CRSs must be identical in every way, other than their
             central longitudes. No checking of this is done.
 
@@ -744,7 +780,6 @@ class PlateCarree(_CylindricalProjection):
                 mod = np.diff(src_crs.x_limits)[0]
                 bboxes, proj_offset = self._bbox_and_offset(src_crs)
                 x_lim = xs.min(), xs.max()
-                y_lim = ys.min(), ys.max()
                 for poly in bboxes:
                     # Arbitrarily choose the number of moduli to look
                     # above and below the -180->180 range. If data is beyond
@@ -770,20 +805,22 @@ class TransverseMercator(Projection):
                  false_easting=0.0, false_northing=0.0,
                  scale_factor=1.0, globe=None):
         """
-        Kwargs:
-
-            * central_longitude - The true longitude of the central meridian in
-                                  degrees. Defaults to 0.
-            * central_latitude - The true latitude of the planar origin in
-                                 degrees. Defaults to 0.
-            * false_easting - X offset from the planar origin in metres.
-                              Defaults to 0.
-            * false_northing - Y offset from the planar origin in metres.
-                               Defaults to 0.
-            * scale_factor - Scale factor at the central meridian. Defaults
-                             to 1.
-            * globe - An instance of :class:`cartopy.crs.Globe`. If omitted, a
-                      default globe is created.
+        Parameters
+        ----------
+        central_longitude: optional
+            The true longitude of the central meridian in degrees.
+            Defaults to 0.
+        central_latitude: optional
+            The true latitude of the planar origin in degrees. Defaults to 0.
+        false_easting: optional
+            X offset from the planar origin in metres. Defaults to 0.
+        false_northing: optional
+            Y offset from the planar origin in metres. Defaults to 0.
+        scale_factor: optional
+            Scale factor at the central meridian. Defaults to 1.
+        globe: optional
+            An instance of :class:`cartopy.crs.Globe`. If omitted, a default
+            globe is created.
 
         """
         proj4_params = [('proj', 'tmerc'), ('lon_0', central_longitude),
@@ -800,7 +837,7 @@ class TransverseMercator(Projection):
     def boundary(self):
         x0, x1 = self.x_limits
         y0, y1 = self.y_limits
-        return sgeom.LineString([(x0, y0), (x0, y1),
+        return sgeom.LinearRing([(x0, y0), (x0, y1),
                                  (x1, y1), (x1, y0),
                                  (x0, y0)])
 
@@ -825,7 +862,7 @@ class OSGB(TransverseMercator):
     def boundary(self):
         w = self.x_limits[1] - self.x_limits[0]
         h = self.y_limits[1] - self.y_limits[0]
-        return sgeom.LineString([(0, 0), (0, h), (w, h), (w, 0), (0, 0)])
+        return sgeom.LinearRing([(0, 0), (0, h), (w, h), (w, 0), (0, 0)])
 
     @property
     def x_limits(self):
@@ -851,7 +888,7 @@ class OSNI(TransverseMercator):
     def boundary(self):
         w = self.x_limits[1] - self.x_limits[0]
         h = self.y_limits[1] - self.y_limits[0]
-        return sgeom.LineString([(0, 0), (0, h), (w, h), (w, 0), (0, 0)])
+        return sgeom.LinearRing([(0, 0), (0, h), (w, h), (w, 0), (0, 0)])
 
     @property
     def x_limits(self):
@@ -869,15 +906,16 @@ class UTM(Projection):
     """
     def __init__(self, zone, southern_hemisphere=False, globe=None):
         """
-        Kwargs:
-
-            * zone - the numeric zone of the UTM required.
-
-            * globe - An instance of :class:`cartopy.crs.Globe`. If omitted, a
-                      default globe is created.
-
-            * southern_hemisphere - set to True if the zone is in the southern
-                                    hemisphere, defaults to False.
+        Parameters
+        ----------
+        zone
+            The numeric zone of the UTM required.
+        southern_hemisphere: optional
+            Set to True if the zone is in the southern hemisphere. Defaults to
+            False.
+        globe: optional
+            An instance of :class:`cartopy.crs.Globe`. If omitted, a default
+            globe is created.
 
         """
         proj4_params = [('proj', 'utm'),
@@ -891,7 +929,7 @@ class UTM(Projection):
     def boundary(self):
         x0, x1 = self.x_limits
         y0, y1 = self.y_limits
-        return sgeom.LineString([(x0, y0), (x0, y1),
+        return sgeom.LinearRing([(x0, y0), (x0, y1),
                                  (x1, y1), (x1, y0),
                                  (x0, y0)])
 
@@ -940,48 +978,77 @@ class Mercator(Projection):
 
     def __init__(self, central_longitude=0.0,
                  min_latitude=-80.0, max_latitude=84.0,
-                 globe=None, latitude_true_scale=0.0):
+                 globe=None, latitude_true_scale=None,
+                 false_easting=0.0, false_northing=0.0, scale_factor=None):
         """
-        Kwargs:
+        Parameters
+        ----------
+        central_longitude: optional
+            The central longitude. Defaults to 0.
+        min_latitude: optional
+            The maximum southerly extent of the projection. Defaults
+            to -80 degrees.
+        max_latitude: optional
+            The maximum northerly extent of the projection. Defaults
+            to 84 degrees.
+        globe: A :class:`cartopy.crs.Globe`, optional
+            If omitted, a default globe is created.
+        latitude_true_scale: optional
+            The latitude where the scale is 1. Defaults to 0 degrees.
+        false_easting: optional
+            X offset from the planar origin in metres. Defaults to 0.
+        false_northing: optional
+            Y offset from the planar origin in metres. Defaults to 0.
+        scale_factor: optional
+            Scale factor at natural origin. Defaults to unused.
 
-            * central_longitude - the central longitude. Defaults to 0.
-            * min_latitude - the maximum southerly extent of the projection.
-                             Defaults to -80 degrees.
-            * max_latitude - the maximum northerly extent of the projection.
-                             Defaults to 84 degrees.
-            * globe - A :class:`cartopy.crs.Globe`.
-                      If omitted, a default globe is created.
-            * latitude_true_scale - the latitude where the scale is 1.
-                                    Defaults to 0 degrees.
-
+        Notes
+        -----
+        Only one of ``latitude_true_scale`` and ``scale_factor`` should
+        be included.
         """
         proj4_params = [('proj', 'merc'),
                         ('lon_0', central_longitude),
-                        ('lat_ts', latitude_true_scale),
+                        ('x_0', false_easting),
+                        ('y_0', false_northing),
                         ('units', 'm')]
+
+        # If it's None, we don't pass it to Proj4, in which case its default
+        # of 0.0 will be used.
+        if latitude_true_scale is not None:
+            proj4_params.append(('lat_ts', latitude_true_scale))
+
+        if scale_factor is not None:
+            if latitude_true_scale is not None:
+                raise ValueError('It does not make sense to provide both '
+                                 '"scale_factor" and "latitude_true_scale". ')
+            else:
+                proj4_params.append(('k_0', scale_factor))
+
         super(Mercator, self).__init__(proj4_params, globe=globe)
 
         # Calculate limits.
+        minlon, maxlon = self._determine_longitude_bounds(central_longitude)
         limits = self.transform_points(Geodetic(),
-                                       np.array([-180,
-                                                 180]) + central_longitude,
+                                       np.array([minlon, maxlon]),
                                        np.array([min_latitude, max_latitude]))
-        self._xlimits = tuple(limits[..., 0])
-        self._ylimits = tuple(limits[..., 1])
-        self._threshold = np.diff(self.x_limits)[0] / 720
+        self._x_limits = tuple(limits[..., 0])
+        self._y_limits = tuple(limits[..., 1])
+        self._threshold = min(np.diff(self.x_limits)[0] / 720,
+                              np.diff(self.y_limits)[0] / 360)
 
     def __eq__(self, other):
         res = super(Mercator, self).__eq__(other)
-        if hasattr(other, "_ylimits") and hasattr(other, "_xlimits"):
-            res = res and self._ylimits == other._ylimits and \
-                self._xlimits == other._xlimits
+        if hasattr(other, "_y_limits") and hasattr(other, "_x_limits"):
+            res = res and self._y_limits == other._y_limits and \
+                self._x_limits == other._x_limits
         return res
 
     def __ne__(self, other):
         return not self == other
 
     def __hash__(self):
-        return hash((self.proj4_init, self._xlimits, self._ylimits))
+        return hash((self.proj4_init, self._x_limits, self._y_limits))
 
     @property
     def threshold(self):
@@ -991,17 +1058,17 @@ class Mercator(Projection):
     def boundary(self):
         x0, x1 = self.x_limits
         y0, y1 = self.y_limits
-        return sgeom.LineString([(x0, y0), (x0, y1),
+        return sgeom.LinearRing([(x0, y0), (x0, y1),
                                  (x1, y1), (x1, y0),
                                  (x0, y0)])
 
     @property
     def x_limits(self):
-        return self._xlimits
+        return self._x_limits
 
     @property
     def y_limits(self):
-        return self._ylimits
+        return self._y_limits
 
 
 # Define a specific instance of a Mercator projection, the Google mercator.
@@ -1038,22 +1105,29 @@ class LambertConformal(Projection):
                  secant_latitudes=None, standard_parallels=None,
                  globe=None, cutoff=-30):
         """
-        Kwargs:
-
-            * central_longitude - The central longitude. Defaults to -96.
-            * central_latitude - The central latitude. Defaults to 39.
-            * false_easting - X offset from planar origin in metres.
-                              Defaults to 0.
-            * false_northing - Y offset from planar origin in metres.
-                               Defaults to 0.
-            * standard_parallels - Standard parallel latitude(s).
-                                   Defaults to (33, 45).
-            * globe - A :class:`cartopy.crs.Globe`.
-                      If omitted, a default globe is created.
-            * cutoff - Latitude of map cutoff.
-                       The map extends to infinity opposite the central pole
-                       so we must cut off the map drawing before then.
-                       A value of 0 will draw half the globe. Defaults to -30.
+        Parameters
+        ----------
+        central_longitude: optional
+            The central longitude. Defaults to -96.
+        central_latitude: optional
+            The central latitude. Defaults to 39.
+        false_easting: optional
+            X offset from planar origin in metres. Defaults to 0.
+        false_northing: optional
+            Y offset from planar origin in metres. Defaults to 0.
+        secant_latitudes: optional
+            Secant latitudes. This keyword is deprecated in v0.12 and directly
+            replaced by ``standard parallels``. Defaults to None.
+        standard_parallels: optional
+            Standard parallel latitude(s). Defaults to (33, 45).
+        globe: optional
+            A :class:`cartopy.crs.Globe`. If omitted, a default globe is
+            created.
+        cutoff: optional
+            Latitude of map cutoff.
+            The map extends to infinity opposite the central pole
+            so we must cut off the map drawing before then.
+            A value of 0 will draw half the globe. Defaults to -30.
 
         """
         proj4_params = [('proj', 'lcc'),
@@ -1102,24 +1176,25 @@ class LambertConformal(Projection):
 
         self.cutoff = cutoff
         n = 91
-        lons = [0]
-        lats = [plat]
-        lons.extend(np.linspace(central_longitude - 180 + 0.001,
-                                central_longitude + 180 - 0.001, n))
-        lats.extend(np.array([cutoff] * n))
-        lons.append(0)
-        lats.append(plat)
-
-        points = self.transform_points(PlateCarree(),
-                                       np.array(lons), np.array(lats))
+        lons = np.empty(n + 2)
+        lats = np.full(n + 2, float(cutoff))
+        lons[0] = lons[-1] = 0
+        lats[0] = lats[-1] = plat
         if plat == 90:
             # Ensure clockwise
-            points = points[::-1, :]
+            lons[1:-1] = np.linspace(central_longitude + 180 - 0.001,
+                                     central_longitude - 180 + 0.001, n)
+        else:
+            lons[1:-1] = np.linspace(central_longitude - 180 + 0.001,
+                                     central_longitude + 180 - 0.001, n)
 
-        self._boundary = sgeom.LineString(points)
-        bounds = self._boundary.bounds
-        self._x_limits = bounds[0], bounds[2]
-        self._y_limits = bounds[1], bounds[3]
+        points = self.transform_points(PlateCarree(), lons, lats)
+
+        self._boundary = sgeom.LinearRing(points)
+        mins = np.min(points, axis=0)
+        maxs = np.max(points, axis=0)
+        self._x_limits = mins[0], maxs[0]
+        self._y_limits = mins[1], maxs[1]
 
     def __eq__(self, other):
         res = super(LambertConformal, self).__eq__(other)
@@ -1160,16 +1235,19 @@ class LambertAzimuthalEqualArea(Projection):
                  false_easting=0.0, false_northing=0.0,
                  globe=None):
         """
-        Kwargs:
-
-            * central_longitude - The central longitude. Defaults to 0.
-            * central_latitude - The central latitude. Defaults to 0.
-            * false_easting - X offset from planar origin in metres.
-                              Defaults to 0.
-            * false_northing - Y offset from planar origin in metres.
-                               Defaults to 0.
-            * globe - A :class:`cartopy.crs.Globe`.
-                      If omitted, a default globe is created.
+        Parameters
+        ----------
+        central_longitude: optional
+            The central longitude. Defaults to 0.
+        central_latitude: optional
+            The central latitude. Defaults to 0.
+        false_easting: optional
+            X offset from planar origin in metres. Defaults to 0.
+        false_northing: optional
+            Y offset from planar origin in metres. Defaults to 0.
+        globe: optional
+            A :class:`cartopy.crs.Globe`. If omitted, a default globe is
+            created.
 
         """
         proj4_params = [('proj', 'laea'),
@@ -1182,15 +1260,21 @@ class LambertAzimuthalEqualArea(Projection):
                                                         globe=globe)
 
         a = np.float(self.globe.semimajor_axis or WGS84_SEMIMAJOR_AXIS)
-        b = np.float(self.globe.semiminor_axis or WGS84_SEMIMINOR_AXIS)
-        lon, lat = central_longitude + 180, - central_latitude + 0.01
+
+        # Find the antipode, and shift it a small amount in latitude to
+        # approximate the extent of the projection:
+        lon = central_longitude + 180
+        sign = np.sign(central_latitude) or 1
+        lat = -central_latitude + sign * 0.01
         x, max_y = self.transform_point(lon, lat, PlateCarree())
 
         coords = _ellipse_boundary(a * 1.9999, max_y - false_northing,
                                    false_easting, false_northing, 61)
         self._boundary = sgeom.polygon.LinearRing(coords.T)
-        self._x_limits = self._boundary.bounds[::2]
-        self._y_limits = self._boundary.bounds[1::2]
+        mins = np.min(coords, axis=1)
+        maxs = np.max(coords, axis=1)
+        self._x_limits = mins[0], maxs[0]
+        self._y_limits = mins[1], maxs[1]
         self._threshold = np.diff(self._x_limits)[0] * 1e-3
 
     @property
@@ -1211,11 +1295,21 @@ class LambertAzimuthalEqualArea(Projection):
 
 
 class Miller(_RectangularProjection):
-    def __init__(self, central_longitude=0.0):
+    _handles_ellipses = False
+
+    def __init__(self, central_longitude=0.0, globe=None):
+        if globe is None:
+            globe = Globe(semimajor_axis=math.degrees(1), ellipse=None)
+
+        # TODO: Let the globe return the semimajor axis always.
+        a = np.float(globe.semimajor_axis or WGS84_SEMIMAJOR_AXIS)
+
         proj4_params = [('proj', 'mill'), ('lon_0', central_longitude)]
-        globe = Globe(semimajor_axis=math.degrees(1))
-        # XXX How can we derive the vertical limit of 131.98?
-        super(Miller, self).__init__(proj4_params, 180, 131.98, globe=globe)
+        # See Snyder, 1987. Eqs (11-1) and (11-2) substituting maximums of
+        # (lambda-lambda0)=180 and phi=90 to get limits.
+        super(Miller, self).__init__(proj4_params,
+                                     a * np.pi, a * 2.303412543376391,
+                                     globe=globe)
 
     @property
     def threshold(self):
@@ -1224,37 +1318,35 @@ class Miller(_RectangularProjection):
 
 class RotatedPole(_CylindricalProjection):
     """
-    Defines a rotated latitude/longitude projected coordinate system
+    A rotated latitude/longitude projected coordinate system
     with cylindrical topology and projected distance.
 
     Coordinates are measured in projection metres.
+
+    The class uses proj to perform an ob_tran operation, using the
+    pole_longitude to set a lon_0 then performing two rotations based on
+    pole_latitude and central_rotated_longitude.
+    This is equivalent to setting the new pole to a location defined by
+    the pole_latitude and pole_longitude values in the GeogCRS defined by
+    globe, then rotating this new CRS about it's pole using the
+    central_rotated_longitude value.
 
     """
 
     def __init__(self, pole_longitude=0.0, pole_latitude=90.0,
                  central_rotated_longitude=0.0, globe=None):
         """
-        Create a RotatedPole CRS.
-
-        The class uses proj4 to perform an ob_tran operation, using the
-        pole_longitude to set a lon_0 then performing two rotations based on
-        pole_latitude and central_rotated_longitude.
-        This is equivalent to setting the new pole to a location defined by
-        the pole_latitude and pole_longitude values in the GeogCRS defined by
-        globe, then rotating this new CRS about it's pole using the
-        central_rotated_longitude value.
-
-        Args:
-
-            * pole_longitude - Pole longitude position, in unrotated degrees.
-            * pole_latitude - Pole latitude position, in unrotated degrees.
-            * central_rotated_longitude - Longitude rotation about the new
-                                          pole, in degrees.
-
-        Kwargs:
-
-            * globe - An optional :class:`cartopy.crs.Globe`.
-                      Defaults to a "WGS84" datum.
+        Parameters
+        ----------
+        pole_longitude: optional
+            Pole longitude position, in unrotated degrees. Defaults to 0.
+        pole_latitude: optional
+            Pole latitude position, in unrotated degrees. Defaults to 0.
+        central_rotated_longitude: optional
+            Longitude rotation about the new pole, in degrees. Defaults to 0.
+        globe: optional
+            An optional :class:`cartopy.crs.Globe`. Defaults to a "WGS84"
+            datum.
 
         """
 
@@ -1271,8 +1363,12 @@ class RotatedPole(_CylindricalProjection):
 
 
 class Gnomonic(Projection):
-    def __init__(self, central_latitude=0.0, globe=None):
-        proj4_params = [('proj', 'gnom'), ('lat_0', central_latitude)]
+    _handles_ellipses = False
+
+    def __init__(self, central_latitude=0.0,
+                 central_longitude=0.0, globe=None):
+        proj4_params = [('proj', 'gnom'), ('lat_0', central_latitude),
+                        ('lon_0', central_longitude)]
         super(Gnomonic, self).__init__(proj4_params, globe=globe)
         self._max = 5e7
 
@@ -1296,12 +1392,44 @@ class Gnomonic(Projection):
 class Stereographic(Projection):
     def __init__(self, central_latitude=0.0, central_longitude=0.0,
                  false_easting=0.0, false_northing=0.0,
-                 true_scale_latitude=None, globe=None):
+                 true_scale_latitude=None,
+                 scale_factor=None, globe=None):
+        # Warn when using Stereographic with proj < 5.0.0 due to
+        # incorrect transformation with lon_0=0 (see
+        # https://github.com/OSGeo/proj.4/issues/194).
+        if central_latitude == 0:
+            if PROJ4_VERSION != ():
+                if PROJ4_VERSION < (5, 0, 0):
+                    warnings.warn(
+                        'The Stereographic projection in Proj older than '
+                        '5.0.0 incorrectly transforms points when '
+                        'central_latitude=0. Use this projection with '
+                        'caution.')
+            else:
+                warnings.warn(
+                    'Cannot determine Proj version. The Stereographic '
+                    'projection may be unreliable and should be used with '
+                    'caution.')
+
         proj4_params = [('proj', 'stere'), ('lat_0', central_latitude),
                         ('lon_0', central_longitude),
                         ('x_0', false_easting), ('y_0', false_northing)]
-        if true_scale_latitude:
+
+        if true_scale_latitude is not None:
+            if central_latitude not in (-90., 90.):
+                warnings.warn('"true_scale_latitude" parameter is only used '
+                              'for polar stereographic projections. Consider '
+                              'the use of "scale_factor" instead.')
             proj4_params.append(('lat_ts', true_scale_latitude))
+
+        if scale_factor is not None:
+            if true_scale_latitude is not None:
+                raise ValueError('It does not make sense to provide both '
+                                 '"scale_factor" and "true_scale_latitude". '
+                                 'Ignoring "scale_factor".')
+            else:
+                proj4_params.append(('k_0', scale_factor))
+
         super(Stereographic, self).__init__(proj4_params, globe=globe)
 
         # TODO: Let the globe return the semimajor axis always.
@@ -1317,13 +1445,9 @@ class Stereographic(Projection):
                           a * x_axis_offset + false_easting)
         self._y_limits = (-b * y_axis_offset + false_northing,
                           b * y_axis_offset + false_northing)
-        if self._x_limits[1] == self._y_limits[1]:
-            point = sgeom.Point(false_easting, false_northing)
-            self._boundary = point.buffer(self._x_limits[1]).exterior
-        else:
-            coords = _ellipse_boundary(self._x_limits[1], self._y_limits[1],
-                                       false_easting, false_northing, 91)
-            self._boundary = sgeom.LinearRing(coords.T)
+        coords = _ellipse_boundary(self._x_limits[1], self._y_limits[1],
+                                   false_easting, false_northing, 91)
+        self._boundary = sgeom.LinearRing(coords.T)
         self._threshold = np.diff(self._x_limits)[0] * 1e-3
 
     @property
@@ -1344,41 +1468,57 @@ class Stereographic(Projection):
 
 
 class NorthPolarStereo(Stereographic):
-    def __init__(self, central_longitude=0.0, globe=None):
+    def __init__(self, central_longitude=0.0, true_scale_latitude=None,
+                 globe=None):
         super(NorthPolarStereo, self).__init__(
             central_latitude=90,
-            central_longitude=central_longitude, globe=globe)
+            central_longitude=central_longitude,
+            true_scale_latitude=true_scale_latitude,  # None is +90
+            globe=globe)
 
 
 class SouthPolarStereo(Stereographic):
-    def __init__(self, central_longitude=0.0, globe=None):
+    def __init__(self, central_longitude=0.0, true_scale_latitude=None,
+                 globe=None):
         super(SouthPolarStereo, self).__init__(
             central_latitude=-90,
-            central_longitude=central_longitude, globe=globe)
+            central_longitude=central_longitude,
+            true_scale_latitude=true_scale_latitude,  # None is -90
+            globe=globe)
 
 
 class Orthographic(Projection):
+    _handles_ellipses = False
+
     def __init__(self, central_longitude=0.0, central_latitude=0.0,
                  globe=None):
+        if PROJ4_VERSION != ():
+            if (5, 0, 0) <= PROJ4_VERSION < (5, 1, 0):
+                warnings.warn(
+                    'The Orthographic projection in Proj between 5.0.0 and '
+                    '5.1.0 incorrectly transforms points. Use this projection '
+                    'with caution.')
+        else:
+            warnings.warn(
+                'Cannot determine Proj version. The Orthographic projection '
+                'may be unreliable and should be used with caution.')
+
         proj4_params = [('proj', 'ortho'), ('lon_0', central_longitude),
                         ('lat_0', central_latitude)]
         super(Orthographic, self).__init__(proj4_params, globe=globe)
 
         # TODO: Let the globe return the semimajor axis always.
         a = np.float(self.globe.semimajor_axis or WGS84_SEMIMAJOR_AXIS)
-        b = np.float(self.globe.semiminor_axis or a)
-
-        if b != a:
-            warnings.warn('The proj4 "ortho" projection does not appear to '
-                          'handle elliptical globes.')
 
         # To stabilise the projection of geometries, we reduce the boundary by
         # a tiny fraction at the cost of the extreme edges.
-        coords = _ellipse_boundary(a * 0.99999, b * 0.99999, n=61)
+        coords = _ellipse_boundary(a * 0.99999, a * 0.99999, n=61)
         self._boundary = sgeom.polygon.LinearRing(coords.T)
-        self._xlim = self._boundary.bounds[::2]
-        self._ylim = self._boundary.bounds[1::2]
-        self._threshold = np.diff(self._xlim)[0] * 0.02
+        mins = np.min(coords, axis=1)
+        maxs = np.max(coords, axis=1)
+        self._x_limits = mins[0], maxs[0]
+        self._y_limits = mins[1], maxs[1]
+        self._threshold = np.diff(self._x_limits)[0] * 0.02
 
     @property
     def boundary(self):
@@ -1390,41 +1530,42 @@ class Orthographic(Projection):
 
     @property
     def x_limits(self):
-        return self._xlim
+        return self._x_limits
 
     @property
     def y_limits(self):
-        return self._ylim
+        return self._y_limits
 
 
-class _WarpedRectangularProjection(Projection):
-    def __init__(self, proj4_params, central_longitude, globe=None):
+class _WarpedRectangularProjection(six.with_metaclass(ABCMeta, Projection)):
+    def __init__(self, proj4_params, central_longitude,
+                 false_easting=None, false_northing=None, globe=None):
+        if false_easting is not None:
+            proj4_params += [('x_0', false_easting)]
+        if false_northing is not None:
+            proj4_params += [('y_0', false_northing)]
         super(_WarpedRectangularProjection, self).__init__(proj4_params,
                                                            globe=globe)
 
         # Obtain boundary points
-        points = []
+        minlon, maxlon = self._determine_longitude_bounds(central_longitude)
         n = 91
-        geodetic_crs = self.as_geodetic()
-        for lat in np.linspace(-90, 90, n):
-            points.append(
-                self.transform_point(180 + central_longitude,
-                                     lat, geodetic_crs)
-            )
-        for lat in np.linspace(90, -90, n):
-            points.append(
-                self.transform_point(-180 + central_longitude,
-                                     lat, geodetic_crs)
-            )
-        points.append(
-            self.transform_point(180 + central_longitude, -90, geodetic_crs))
+        lon = np.empty(2 * n + 1)
+        lat = np.empty(2 * n + 1)
+        lon[:n] = minlon
+        lat[:n] = np.linspace(-90, 90, n)
+        lon[n:2 * n] = maxlon
+        lat[n:2 * n] = np.linspace(90, -90, n)
+        lon[-1] = minlon
+        lat[-1] = -90
+        points = self.transform_points(self.as_geodetic(), lon, lat)
 
-        self._boundary = sgeom.LineString(points[::-1])
+        self._boundary = sgeom.LinearRing(points)
 
-        x = [p[0] for p in points]
-        y = [p[1] for p in points]
-        self._x_limits = min(x), max(x)
-        self._y_limits = min(y), max(y)
+        mins = np.min(points, axis=0)
+        maxs = np.max(points, axis=0)
+        self._x_limits = mins[0], maxs[0]
+        self._y_limits = mins[1], maxs[1]
 
     @property
     def boundary(self):
@@ -1439,10 +1580,212 @@ class _WarpedRectangularProjection(Projection):
         return self._y_limits
 
 
+class _Eckert(six.with_metaclass(ABCMeta, _WarpedRectangularProjection)):
+    """
+    An Eckert projection.
+
+    This class implements all the methods common to the Eckert family of
+    projections.
+
+    """
+
+    _handles_ellipses = False
+
+    def __init__(self, central_longitude=0, false_easting=None,
+                 false_northing=None, globe=None):
+        """
+        Parameters
+        ----------
+        central_longitude: float, optional
+            The central longitude. Defaults to 0.
+        false_easting: float, optional
+            X offset from planar origin in metres. Defaults to 0.
+        false_northing: float, optional
+            Y offset from planar origin in metres. Defaults to 0.
+        globe: :class:`cartopy.crs.Globe`, optional
+            If omitted, a default globe is created.
+
+            .. note::
+                This projection does not handle elliptical globes.
+
+        """
+        proj4_params = [('proj', self._proj_name),
+                        ('lon_0', central_longitude)]
+        super(_Eckert, self).__init__(proj4_params, central_longitude,
+                                      false_easting=false_easting,
+                                      false_northing=false_northing,
+                                      globe=globe)
+
+    @property
+    def threshold(self):
+        return 1e5
+
+
+class EckertI(_Eckert):
+    """
+    An Eckert I projection.
+
+    This projection is pseudocylindrical, but not equal-area. Both meridians
+    and parallels are straight lines. Its equal-area pair is :class:`EckertII`.
+
+    """
+    _proj_name = 'eck1'
+
+
+class EckertII(_Eckert):
+    """
+    An Eckert II projection.
+
+    This projection is pseudocylindrical, and equal-area. Both meridians and
+    parallels are straight lines. Its non-equal-area pair with equally-spaced
+    parallels is :class:`EckertI`.
+
+    """
+    _proj_name = 'eck2'
+
+
+class EckertIII(_Eckert):
+    """
+    An Eckert III projection.
+
+    This projection is pseudocylindrical, but not equal-area. Parallels are
+    equally-spaced straight lines, while meridians are elliptical arcs up to
+    semicircles on the edges. Its equal-area pair is :class:`EckertIV`.
+
+    """
+    _proj_name = 'eck3'
+
+
+class EckertIV(_Eckert):
+    """
+    An Eckert IV projection.
+
+    This projection is pseudocylindrical, and equal-area. Parallels are
+    unequally-spaced straight lines, while meridians are elliptical arcs up to
+    semicircles on the edges. Its non-equal-area pair with equally-spaced
+    parallels is :class:`EckertIII`.
+
+    It is commonly used for world maps.
+
+    """
+    _proj_name = 'eck4'
+
+
+class EckertV(_Eckert):
+    """
+    An Eckert V projection.
+
+    This projection is pseudocylindrical, but not equal-area. Parallels are
+    equally-spaced straight lines, while meridians are sinusoidal arcs. Its
+    equal-area pair is :class:`EckertVI`.
+
+    """
+    _proj_name = 'eck5'
+
+
+class EckertVI(_Eckert):
+    """
+    An Eckert VI projection.
+
+    This projection is pseudocylindrical, and equal-area. Parallels are
+    unequally-spaced straight lines, while meridians are sinusoidal arcs. Its
+    non-equal-area pair with equally-spaced parallels is :class:`EckertV`.
+
+    It is commonly used for world maps.
+
+    """
+    _proj_name = 'eck6'
+
+
+class EqualEarth(_WarpedRectangularProjection):
+    u"""
+    An Equal Earth projection.
+
+    This projection is pseudocylindrical, and equal area. Parallels are
+    unequally-spaced straight lines, while meridians are equally-spaced arcs.
+
+    It is intended for world maps.
+
+    Note
+    ----
+    To use this projection, you must be using Proj 5.2.0 or newer.
+
+    References
+    ----------
+    Bojan \u0160avri\u010d, Tom Patterson & Bernhard Jenny (2018) The Equal
+    Earth map projection, International Journal of Geographical Information
+    Science, DOI: 10.1080/13658816.2018.1504949
+
+    """
+
+    def __init__(self, central_longitude=0, false_easting=None,
+                 false_northing=None, globe=None):
+        """
+        Parameters
+        ----------
+        central_longitude: float, optional
+            The central longitude. Defaults to 0.
+        false_easting: float, optional
+            X offset from planar origin in metres. Defaults to 0.
+        false_northing: float, optional
+            Y offset from planar origin in metres. Defaults to 0.
+        globe: :class:`cartopy.crs.Globe`, optional
+            If omitted, a default globe is created.
+
+        """
+        if PROJ4_VERSION < (5, 2, 0):
+            raise ValueError('The EqualEarth projection requires Proj version '
+                             '5.2.0, but you are using {}.'
+                             .format('.'.join(str(v) for v in PROJ4_VERSION)))
+
+        proj_params = [('proj', 'eqearth'), ('lon_0', central_longitude)]
+        super(EqualEarth, self).__init__(proj_params, central_longitude,
+                                         false_easting=false_easting,
+                                         false_northing=false_northing,
+                                         globe=globe)
+
+    @property
+    def threshold(self):
+        return 1e5
+
+
 class Mollweide(_WarpedRectangularProjection):
-    def __init__(self, central_longitude=0, globe=None):
+    """
+    A Mollweide projection.
+
+    This projection is pseudocylindrical, and equal area. Parallels are
+    unequally-spaced straight lines, while meridians are elliptical arcs up to
+    semicircles on the edges. Poles are points.
+
+    It is commonly used for world maps, or interrupted with several central
+    meridians.
+
+    """
+
+    _handles_ellipses = False
+
+    def __init__(self, central_longitude=0, globe=None,
+                 false_easting=None, false_northing=None):
+        """
+        Parameters
+        ----------
+        central_longitude: float, optional
+            The central longitude. Defaults to 0.
+        false_easting: float, optional
+            X offset from planar origin in metres. Defaults to 0.
+        false_northing: float, optional
+            Y offset from planar origin in metres. Defaults to 0.
+        globe: :class:`cartopy.crs.Globe`, optional
+            If omitted, a default globe is created.
+
+            .. note::
+                This projection does not handle elliptical globes.
+
+        """
         proj4_params = [('proj', 'moll'), ('lon_0', central_longitude)]
         super(Mollweide, self).__init__(proj4_params, central_longitude,
+                                        false_easting=false_easting,
+                                        false_northing=false_northing,
                                         globe=globe)
 
     @property
@@ -1451,24 +1794,55 @@ class Mollweide(_WarpedRectangularProjection):
 
 
 class Robinson(_WarpedRectangularProjection):
-    def __init__(self, central_longitude=0, globe=None):
-        # Warn when using Robinson with proj4 4.8 due to discontinuity at
+    """
+    A Robinson projection.
+
+    This projection is pseudocylindrical, and a compromise that is neither
+    equal-area nor conformal. Parallels are unequally-spaced straight lines,
+    and meridians are curved lines of no particular form.
+
+    It is commonly used for "visually-appealing" world maps.
+
+    """
+
+    _handles_ellipses = False
+
+    def __init__(self, central_longitude=0, globe=None,
+                 false_easting=None, false_northing=None):
+        """
+        Parameters
+        ----------
+        central_longitude: float, optional
+            The central longitude. Defaults to 0.
+        false_easting: float, optional
+            X offset from planar origin in metres. Defaults to 0.
+        false_northing: float, optional
+            Y offset from planar origin in metres. Defaults to 0.
+        globe: :class:`cartopy.crs.Globe`, optional
+            If omitted, a default globe is created.
+
+            .. note::
+                This projection does not handle elliptical globes.
+
+        """
+        # Warn when using Robinson with proj 4.8 due to discontinuity at
         # 40 deg N introduced by incomplete fix to issue #113 (see
-        # https://trac.osgeo.org/proj/ticket/113).
-        import re
+        # https://github.com/OSGeo/proj.4/issues/113).
         if PROJ4_VERSION != ():
             if (4, 8) <= PROJ4_VERSION < (4, 9):
                 warnings.warn('The Robinson projection in the v4.8.x series '
-                              'of Proj.4 contains a discontinuity at '
+                              'of Proj contains a discontinuity at '
                               '40 deg latitude. Use this projection with '
                               'caution.')
         else:
-            warnings.warn('Cannot determine Proj.4 version. The Robinson '
+            warnings.warn('Cannot determine Proj version. The Robinson '
                           'projection may be unreliable and should be used '
                           'with caution.')
 
         proj4_params = [('proj', 'robin'), ('lon_0', central_longitude)]
         super(Robinson, self).__init__(proj4_params, central_longitude,
+                                       false_easting=false_easting,
+                                       false_northing=false_northing,
                                        globe=globe)
 
     @property
@@ -1483,8 +1857,8 @@ class Robinson(_WarpedRectangularProjection):
         Needed because input NaNs can trigger a fatal error in the underlying
         implementation of the Robinson projection.
 
-        .. note::
-
+        Note
+        ----
             Although the original can in fact translate (nan, lat) into
             (nan, y-value), this patched version doesn't support that.
 
@@ -1503,8 +1877,8 @@ class Robinson(_WarpedRectangularProjection):
         Needed because input NaNs can trigger a fatal error in the underlying
         implementation of the Robinson projection.
 
-        .. note::
-
+        Note
+        ----
             Although the original can in fact translate (nan, lat) into
             (nan, y-value), this patched version doesn't support that.
             Instead, we invalidate any of the points that contain a NaN.
@@ -1534,57 +1908,60 @@ class InterruptedGoodeHomolosine(Projection):
         super(InterruptedGoodeHomolosine, self).__init__(proj4_params,
                                                          globe=globe)
 
+        minlon, maxlon = self._determine_longitude_bounds(central_longitude)
+        epsilon = 1e-10
+
         # Obtain boundary points
-        points = []
         n = 31
-        geodetic_crs = self.as_geodetic()
-
-        # Right boundary
-        for lat in np.linspace(-90, 90, n):
-            points.append(self.transform_point(180 + central_longitude,
-                                               lat, geodetic_crs))
-
-        # Top boundary
-        interrupted_lons = (-40.0,)
-        delta = 0.001
-        for lon in interrupted_lons:
-            for lat in np.linspace(90, 0, n):
-                points.append(self.transform_point(lon + delta +
-                                                   central_longitude,
-                                                   lat, geodetic_crs))
-            for lat in np.linspace(0, 90, n):
-                points.append(self.transform_point(lon - delta +
-                                                   central_longitude,
-                                                   lat, geodetic_crs))
+        top_interrupted_lons = (-40.0,)
+        bottom_interrupted_lons = (80.0, -20.0, -100.0)
+        lons = np.empty(
+            (2 + 2 * len(top_interrupted_lons + bottom_interrupted_lons)) * n +
+            1)
+        lats = np.empty(
+            (2 + 2 * len(top_interrupted_lons + bottom_interrupted_lons)) * n +
+            1)
+        end = 0
 
         # Left boundary
-        for lat in np.linspace(90, -90, n):
-            points.append(self.transform_point(-180 + central_longitude,
-                                               lat, geodetic_crs))
+        lons[end:end + n] = minlon
+        lats[end:end + n] = np.linspace(-90, 90, n)
+        end += n
+
+        # Top boundary
+        for lon in top_interrupted_lons:
+            lons[end:end + n] = lon - epsilon + central_longitude
+            lats[end:end + n] = np.linspace(90, 0, n)
+            end += n
+            lons[end:end + n] = lon + epsilon + central_longitude
+            lats[end:end + n] = np.linspace(0, 90, n)
+            end += n
+
+        # Right boundary
+        lons[end:end + n] = maxlon
+        lats[end:end + n] = np.linspace(90, -90, n)
+        end += n
 
         # Bottom boundary
-        interrupted_lons = (-100.0, -20.0, 80.0)
-        delta = 0.001
-        for lon in interrupted_lons:
-            for lat in np.linspace(-90, 0, n):
-                points.append(self.transform_point(lon - delta +
-                                                   central_longitude,
-                                                   lat, geodetic_crs))
-            for lat in np.linspace(0, -90, n):
-                points.append(self.transform_point(lon + delta +
-                                                   central_longitude,
-                                                   lat, geodetic_crs))
+        for lon in bottom_interrupted_lons:
+            lons[end:end + n] = lon + epsilon + central_longitude
+            lats[end:end + n] = np.linspace(-90, 0, n)
+            end += n
+            lons[end:end + n] = lon - epsilon + central_longitude
+            lats[end:end + n] = np.linspace(0, -90, n)
+            end += n
 
         # Close loop
-        points.append(self.transform_point(180 + central_longitude, -90,
-                                           geodetic_crs))
+        lons[-1] = minlon
+        lats[-1] = -90
 
-        self._boundary = sgeom.LineString(points[::-1])
+        points = self.transform_points(self.as_geodetic(), lons, lats)
+        self._boundary = sgeom.LinearRing(points)
 
-        x = [p[0] for p in points]
-        y = [p[1] for p in points]
-        self._x_limits = min(x), max(x)
-        self._y_limits = min(y), max(y)
+        mins = np.min(points, axis=0)
+        maxs = np.max(points, axis=0)
+        self._x_limits = mins[0], maxs[0]
+        self._y_limits = mins[1], maxs[1]
 
     @property
     def boundary(self):
@@ -1606,26 +1983,23 @@ class InterruptedGoodeHomolosine(Projection):
 class _Satellite(Projection):
     def __init__(self, projection, satellite_height=35785831,
                  central_longitude=0.0, central_latitude=0.0,
-                 false_easting=0, false_northing=0, globe=None):
+                 false_easting=0, false_northing=0, globe=None,
+                 sweep_axis=None):
         proj4_params = [('proj', projection), ('lon_0', central_longitude),
                         ('lat_0', central_latitude), ('h', satellite_height),
                         ('x_0', false_easting), ('y_0', false_northing),
                         ('units', 'm')]
+        if sweep_axis:
+            proj4_params.append(('sweep', sweep_axis))
         super(_Satellite, self).__init__(proj4_params, globe=globe)
 
-        # TODO: Let the globe return the semimajor axis always.
-        a = np.float(self.globe.semimajor_axis or WGS84_SEMIMAJOR_AXIS)
-        b = np.float(self.globe.semiminor_axis or a)
-        h = np.float(satellite_height)
-        max_x = h * math.atan(a / (a + h))
-        max_y = h * math.atan(b / (b + h))
-
-        coords = _ellipse_boundary(max_x, max_y,
-                                   false_easting, false_northing, 61)
+    def _set_boundary(self, coords):
         self._boundary = sgeom.LinearRing(coords.T)
-        self._xlim = self._boundary.bounds[::2]
-        self._ylim = self._boundary.bounds[1::2]
-        self._threshold = np.diff(self._xlim)[0] * 0.02
+        mins = np.min(coords, axis=1)
+        maxs = np.max(coords, axis=1)
+        self._x_limits = mins[0], maxs[0]
+        self._y_limits = mins[1], maxs[1]
+        self._threshold = np.diff(self._x_limits)[0] * 0.02
 
     @property
     def boundary(self):
@@ -1637,20 +2011,47 @@ class _Satellite(Projection):
 
     @property
     def x_limits(self):
-        return self._xlim
+        return self._x_limits
 
     @property
     def y_limits(self):
-        return self._ylim
+        return self._y_limits
 
 
 class Geostationary(_Satellite):
     """
+    A view appropriate for satellites in Geostationary Earth orbit.
+
     Perspective view looking directly down from above a point on the equator.
+
+    In this projection, the projected coordinates are scanning angles measured
+    from the satellite looking directly downward, multiplied by the height of
+    the satellite.
 
     """
     def __init__(self, central_longitude=0.0, satellite_height=35785831,
-                 false_easting=0, false_northing=0, globe=None):
+                 false_easting=0, false_northing=0, globe=None,
+                 sweep_axis='y'):
+        """
+        Parameters
+        ----------
+        central_longitude: float, optional
+            The central longitude. Defaults to 0.
+        satellite_height: float, optional
+            The height of the satellite. Defaults to 35785831 meters
+            (true geostationary orbit).
+        false_easting:
+            X offset from planar origin in metres. Defaults to 0.
+        false_northing:
+            Y offset from planar origin in metres. Defaults to 0.
+        globe: :class:`cartopy.crs.Globe`, optional
+            If omitted, a default globe is created.
+        sweep_axis: 'x' or 'y', optional. Defaults to 'y'.
+            Controls which axis is scanned first, and thus which angle is
+            applied first. The default is appropriate for Meteosat, while
+            'x' should be used for GOES.
+        """
+
         super(Geostationary, self).__init__(
             projection='geos',
             satellite_height=satellite_height,
@@ -1658,17 +2059,65 @@ class Geostationary(_Satellite):
             central_latitude=0.0,
             false_easting=false_easting,
             false_northing=false_northing,
-            globe=globe)
+            globe=globe,
+            sweep_axis=sweep_axis)
+
+        # TODO: Let the globe return the semimajor axis always.
+        a = np.float(self.globe.semimajor_axis or WGS84_SEMIMAJOR_AXIS)
+        h = np.float(satellite_height)
+
+        # These are only exact for a spherical Earth, owing to assuming a is
+        # constant. Handling elliptical would be much harder for this.
+        sin_max_th = a / (a + h)
+        tan_max_th = a / np.sqrt((a + h) ** 2 - a ** 2)
+
+        # Using Napier's rules for right spherical triangles
+        # See R2 and R6 (x and y coords are h * b and h * a, respectively):
+        # https://en.wikipedia.org/wiki/Spherical_trigonometry
+        t = np.linspace(0, -2 * np.pi, 61)  # Clockwise boundary.
+        coords = np.vstack([np.arctan(tan_max_th * np.cos(t)),
+                            np.arcsin(sin_max_th * np.sin(t))])
+        coords *= h
+        coords += np.array([[false_easting], [false_northing]])
+        self._set_boundary(coords)
 
 
 class NearsidePerspective(_Satellite):
     """
     Perspective view looking directly down from above a point on the globe.
 
+    In this projection, the projected coordinates are x and y measured from
+    the origin of a plane tangent to the Earth directly below the perspective
+    point (e.g. a satellite).
+
     """
+
+    _handles_ellipses = False
+
     def __init__(self, central_longitude=0.0, central_latitude=0.0,
                  satellite_height=35785831,
                  false_easting=0, false_northing=0, globe=None):
+        """
+        Parameters
+        ----------
+        central_longitude: float, optional
+            The central longitude. Defaults to 0.
+        central_latitude: float, optional
+            The central latitude. Defaults to 0.
+        satellite_height: float, optional
+            The height of the satellite. Defaults to 35785831 meters
+            (true geostationary orbit).
+        false_easting:
+            X offset from planar origin in metres. Defaults to 0.
+        false_northing:
+            Y offset from planar origin in metres. Defaults to 0.
+        globe: :class:`cartopy.crs.Globe`, optional
+            If omitted, a default globe is created.
+
+            .. note::
+                This projection does not handle elliptical globes.
+
+        """
         super(NearsidePerspective, self).__init__(
             projection='nsper',
             satellite_height=satellite_height,
@@ -1678,6 +2127,15 @@ class NearsidePerspective(_Satellite):
             false_northing=false_northing,
             globe=globe)
 
+        # TODO: Let the globe return the semimajor axis always.
+        a = self.globe.semimajor_axis or WGS84_SEMIMAJOR_AXIS
+
+        h = np.float(satellite_height)
+        max_x = a * np.sqrt(h / (2 * a + h))
+        coords = _ellipse_boundary(max_x, max_x,
+                                   false_easting, false_northing, 61)
+        self._set_boundary(coords)
+
 
 class AlbersEqualArea(Projection):
     """
@@ -1685,24 +2143,28 @@ class AlbersEqualArea(Projection):
 
     This projection is conic and equal-area, and is commonly used for maps of
     the conterminous United States.
+
     """
 
     def __init__(self, central_longitude=0.0, central_latitude=0.0,
                  false_easting=0.0, false_northing=0.0,
                  standard_parallels=(20.0, 50.0), globe=None):
         """
-        Kwargs:
-
-            * central_longitude - The central longitude. Defaults to 0.
-            * central_latitude - The central latitude. Defaults to 0.
-            * false_easting - X offset from planar origin in metres.
-                              Defaults to 0.
-            * false_northing - Y offset from planar origin in metres.
-                               Defaults to 0.
-            * standard_parallels - The one or two latitudes of correct scale.
-                                   Defaults to (20, 50).
-            * globe - A :class:`cartopy.crs.Globe`.
-                      If omitted, a default globe is created.
+        Parameters
+        ----------
+        central_longitude: optional
+            The central longitude. Defaults to 0.
+        central_latitude: optional
+            The central latitude. Defaults to 0.
+        false_easting: optional
+            X offset from planar origin in metres. Defaults to 0.
+        false_northing: optional
+            Y offset from planar origin in metres. Defaults to 0.
+        standard_parallels: optional
+            The one or two latitudes of correct scale. Defaults to (20, 50).
+        globe: optional
+            A :class:`cartopy.crs.Globe`. If omitted, a default globe is
+            created.
 
         """
         proj4_params = [('proj', 'aea'),
@@ -1723,10 +2185,11 @@ class AlbersEqualArea(Projection):
         super(AlbersEqualArea, self).__init__(proj4_params, globe=globe)
 
         # bounds
+        minlon, maxlon = self._determine_longitude_bounds(central_longitude)
         n = 103
         lons = np.empty(2 * n + 1)
         lats = np.empty(2 * n + 1)
-        tmp = np.linspace(central_longitude - 180, central_longitude + 180, n)
+        tmp = np.linspace(minlon, maxlon, n)
         lons[:n] = tmp
         lats[:n] = 90
         lons[n:-1] = tmp[::-1]
@@ -1736,10 +2199,11 @@ class AlbersEqualArea(Projection):
 
         points = self.transform_points(self.as_geodetic(), lons, lats)
 
-        self._boundary = sgeom.LineString(points)
-        bounds = self._boundary.bounds
-        self._x_limits = bounds[0], bounds[2]
-        self._y_limits = bounds[1], bounds[3]
+        self._boundary = sgeom.LinearRing(points)
+        mins = np.min(points, axis=0)
+        maxs = np.max(points, axis=0)
+        self._x_limits = mins[0], maxs[0]
+        self._y_limits = mins[1], maxs[1]
 
     @property
     def boundary(self):
@@ -1770,31 +2234,34 @@ class AzimuthalEquidistant(Projection):
                  false_easting=0.0, false_northing=0.0,
                  globe=None):
         """
-        Kwargs:
-
-            * central_longitude - The true longitude of the central meridian in
-                                  degrees. Defaults to 0.
-            * central_latitude - The true latitude of the planar origin in
-                                 degrees. Defaults to 0.
-            * false_easting - X offset from the planar origin in metres.
-                              Defaults to 0.
-            * false_northing - Y offset from the planar origin in metres.
-                               Defaults to 0.
-            * globe - An instance of :class:`cartopy.crs.Globe`. If omitted, a
-                      default globe is created.
+        Parameters
+        ----------
+        central_longitude: optional
+            The true longitude of the central meridian in degrees.
+            Defaults to 0.
+        central_latitude: optional
+            The true latitude of the planar origin in degrees.
+            Defaults to 0.
+        false_easting: optional
+            X offset from the planar origin in metres. Defaults to 0.
+        false_northing: optional
+            Y offset from the planar origin in metres. Defaults to 0.
+        globe: optional
+            An instance of :class:`cartopy.crs.Globe`. If omitted, a default
+            globe is created.
 
         """
-        # Warn when using Azimuthal Equidistant with proj4 < 4.9.2 due to
+        # Warn when using Azimuthal Equidistant with proj < 4.9.2 due to
         # incorrect transformation past 90 deg distance (see
         # https://github.com/OSGeo/proj.4/issues/246).
         if PROJ4_VERSION != ():
             if PROJ4_VERSION < (4, 9, 2):
-                warnings.warn('The Azimuthal Equidistant projection in Proj.4 '
+                warnings.warn('The Azimuthal Equidistant projection in Proj '
                               'older than 4.9.2 incorrectly transforms points '
                               'farther than 90 deg from the origin. Use this '
                               'projection with caution.')
         else:
-            warnings.warn('Cannot determine Proj.4 version. The Azimuthal '
+            warnings.warn('Cannot determine Proj version. The Azimuthal '
                           'Equidistant projection may be unreliable and '
                           'should be used with caution.')
 
@@ -1810,9 +2277,10 @@ class AzimuthalEquidistant(Projection):
         coords = _ellipse_boundary(a * np.pi, b * np.pi,
                                    false_easting, false_northing, 61)
         self._boundary = sgeom.LinearRing(coords.T)
-        bounds = self._boundary.bounds
-        self._x_limits = bounds[0], bounds[2]
-        self._y_limits = bounds[1], bounds[3]
+        mins = np.min(coords, axis=1)
+        maxs = np.max(coords, axis=1)
+        self._x_limits = mins[0], maxs[0]
+        self._y_limits = mins[1], maxs[1]
 
     @property
     def boundary(self):
@@ -1836,20 +2304,24 @@ class Sinusoidal(Projection):
     A Sinusoidal projection.
 
     This projection is equal-area.
+
     """
 
     def __init__(self, central_longitude=0.0, false_easting=0.0,
                  false_northing=0.0, globe=None):
         """
-        Kwargs:
+        Parameters
+        ----------
+        central_longitude: optional
+            The central longitude. Defaults to 0.
+        false_easting: optional
+            X offset from planar origin in metres. Defaults to 0.
+        false_northing: optional
+            Y offset from planar origin in metres. Defaults to 0.
+        globe: optional
+            A :class:`cartopy.crs.Globe`. If omitted, a default globe is
+            created.
 
-            * central_longitude - The central longitude. Defaults to 0.
-            * false_easting - X offset from planar origin in metres.
-                              Defaults to 0.
-            * false_northing - Y offset from planar origin in metres.
-                               Defaults to 0.
-            * globe - A :class:`cartopy.crs.Globe`.
-                      If omitted, a default globe is created.
         """
         proj4_params = [('proj', 'sinu'),
                         ('lon_0', central_longitude),
@@ -1858,26 +2330,24 @@ class Sinusoidal(Projection):
         super(Sinusoidal, self).__init__(proj4_params, globe=globe)
 
         # Obtain boundary points
+        minlon, maxlon = self._determine_longitude_bounds(central_longitude)
         points = []
         n = 91
-        geodetic_crs = self.as_geodetic()
-        for lat in np.linspace(-90, 90, n):
-            points.append(
-                self.transform_point(180 + central_longitude,
-                                     lat, geodetic_crs)
-            )
-        for lat in np.linspace(90, -90, n):
-            points.append(
-                self.transform_point(-180 + central_longitude,
-                                     lat, geodetic_crs)
-            )
-        points.append(
-            self.transform_point(180 + central_longitude, -90, geodetic_crs))
+        lon = np.empty(2 * n + 1)
+        lat = np.empty(2 * n + 1)
+        lon[:n] = minlon
+        lat[:n] = np.linspace(-90, 90, n)
+        lon[n:2 * n] = maxlon
+        lat[n:2 * n] = np.linspace(90, -90, n)
+        lon[-1] = minlon
+        lat[-1] = -90
+        points = self.transform_points(self.as_geodetic(), lon, lat)
 
-        self._boundary = sgeom.LineString(points[::-1])
-        minx, miny, maxx, maxy = self._boundary.bounds
-        self._x_limits = minx, maxx
-        self._y_limits = miny, maxy
+        self._boundary = sgeom.LinearRing(points)
+        mins = np.min(points, axis=0)
+        maxs = np.max(points, axis=0)
+        self._x_limits = mins[0], maxs[0]
+        self._y_limits = mins[1], maxs[1]
         self._threshold = max(np.abs(self.x_limits + self.y_limits)) * 1e-5
 
     @property
@@ -1904,6 +2374,90 @@ Sinusoidal.MODIS = Sinusoidal(globe=Globe(ellipse=None,
                                           semiminor_axis=6371007.181))
 
 
+class EquidistantConic(Projection):
+    """
+    An Equidistant Conic projection.
+
+    This projection is conic and equidistant, and the scale is true along all
+    meridians and along one or two specified standard parallels.
+    """
+
+    def __init__(self, central_longitude=0.0, central_latitude=0.0,
+                 false_easting=0.0, false_northing=0.0,
+                 standard_parallels=(20.0, 50.0), globe=None):
+        """
+        Parameters
+        ----------
+        central_longitude: optional
+            The central longitude. Defaults to 0.
+        central_latitude: optional
+            The true latitude of the planar origin in degrees. Defaults to 0.
+        false_easting: optional
+            X offset from planar origin in metres. Defaults to 0.
+        false_northing: optional
+            Y offset from planar origin in metres. Defaults to 0.
+        standard_parallels: optional
+            The one or two latitudes of correct scale. Defaults to (20, 50).
+        globe: optional
+            A :class:`cartopy.crs.Globe`. If omitted, a default globe is
+            created.
+
+        """
+        proj4_params = [('proj', 'eqdc'),
+                        ('lon_0', central_longitude),
+                        ('lat_0', central_latitude),
+                        ('x_0', false_easting),
+                        ('y_0', false_northing)]
+        if standard_parallels is not None:
+            try:
+                proj4_params.append(('lat_1', standard_parallels[0]))
+                try:
+                    proj4_params.append(('lat_2', standard_parallels[1]))
+                except IndexError:
+                    pass
+            except TypeError:
+                proj4_params.append(('lat_1', standard_parallels))
+
+        super(EquidistantConic, self).__init__(proj4_params, globe=globe)
+
+        # bounds
+        n = 103
+        lons = np.empty(2 * n + 1)
+        lats = np.empty(2 * n + 1)
+        minlon, maxlon = self._determine_longitude_bounds(central_longitude)
+        tmp = np.linspace(minlon, maxlon, n)
+        lons[:n] = tmp
+        lats[:n] = 90
+        lons[n:-1] = tmp[::-1]
+        lats[n:-1] = -90
+        lons[-1] = lons[0]
+        lats[-1] = lats[0]
+
+        points = self.transform_points(self.as_geodetic(), lons, lats)
+
+        self._boundary = sgeom.LinearRing(points)
+        mins = np.min(points, axis=0)
+        maxs = np.max(points, axis=0)
+        self._x_limits = mins[0], maxs[0]
+        self._y_limits = mins[1], maxs[1]
+
+    @property
+    def boundary(self):
+        return self._boundary
+
+    @property
+    def threshold(self):
+        return 1e5
+
+    @property
+    def x_limits(self):
+        return self._x_limits
+
+    @property
+    def y_limits(self):
+        return self._y_limits
+
+
 class _BoundaryPoint(object):
     def __init__(self, distance, kind, data):
         """
@@ -1911,15 +2465,16 @@ class _BoundaryPoint(object):
         connected to the boundary.
 
         Parameters
-        ==========
-        distance - float
+        ----------
+        distance: float
             The distance along the boundary that this object
             can be found.
-        kind - bool
-            Whether this object represents a point from the pre-computed
-            boundary.
-        data - point or namedtuple
+        kind: bool
+            Whether this object represents a point from the
+            pre-computed boundary.
+        data: point or namedtuple
             The actual data that this boundary object represents.
+
         """
         self.distance = distance
         self.kind = kind
@@ -1930,9 +2485,9 @@ class _BoundaryPoint(object):
                                                self.data)
 
 
-def _find_first_gt(a, x):
+def _find_first_ge(a, x):
     for v in a:
-        if v.distance > x:
+        if v.distance >= x:
             return v
     # We've gone all the way around, so pick the first point again.
     return a[0]
@@ -1946,7 +2501,8 @@ def epsg(code):
     so EPSG codes such as 4326 (WGS-84) which define a "geodetic coordinate
     system" will not work.
 
-    .. note::
+    Note
+    ----
         The conversion is performed by querying https://epsg.io/ so a
         live internet connection is required.
 

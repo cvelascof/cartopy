@@ -1,4 +1,12 @@
+"""
+Filled contours
+---------------
+
+An example of contourf on manufactured data.
+
+"""
 __tags__ = ['Scalar data']
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -6,7 +14,7 @@ import cartopy.crs as ccrs
 
 
 def sample_data(shape=(73, 145)):
-    """Returns ``lons``, ``lats`` and ``data`` of some fake data."""
+    """Return ``lons``, ``lats`` and ``data`` of some fake data."""
     nlats, nlons = shape
     lats = np.linspace(-np.pi / 2, np.pi / 2, nlats)
     lons = np.linspace(0, 2 * np.pi, nlons)
@@ -22,13 +30,14 @@ def sample_data(shape=(73, 145)):
 
 
 def main():
-    ax = plt.axes(projection=ccrs.Mollweide())
+    fig = plt.figure(figsize=(10, 5))
+    ax = fig.add_subplot(1, 1, 1, projection=ccrs.Mollweide())
 
     lons, lats, data = sample_data()
 
     ax.contourf(lons, lats, data,
                 transform=ccrs.PlateCarree(),
-                cmap='spectral')
+                cmap='nipy_spectral')
     ax.coastlines()
     ax.set_global()
     plt.show()

@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2011 - 2016, Met Office
+# (C) British Crown Copyright 2011 - 2018, Met Office
 #
 # This file is part of cartopy.
 #
@@ -17,44 +17,44 @@
 
 from __future__ import (absolute_import, division, print_function)
 
-import unittest
-
-
 from matplotlib.testing.decorators import cleanup
 import matplotlib.path as mpath
 import matplotlib.pyplot as plt
-from nose.tools import assert_equal
+try:
+    from unittest import mock
+except ImportError:
+    import mock
 import numpy as np
-
+import pytest
 
 import cartopy.crs as ccrs
-from cartopy.mpl.geoaxes import InterProjectionTransform
-from .test_caching import CallCounter
+from cartopy.mpl.geoaxes import InterProjectionTransform, GeoAxes
+from cartopy.tests.mpl.test_caching import CallCounter
 
 
-class TestNoSpherical(unittest.TestCase):
-    def setUp(self):
+class TestNoSpherical(object):
+    def setup_method(self):
         self.ax = plt.axes(projection=ccrs.PlateCarree())
         self.data = np.arange(12).reshape((3, 4))
 
-    def tearDown(self):
+    def teardown_method(self):
         plt.clf()
         plt.close()
 
     def test_contour(self):
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             self.ax.contour(self.data, transform=ccrs.Geodetic())
 
     def test_contourf(self):
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             self.ax.contourf(self.data, transform=ccrs.Geodetic())
 
     def test_pcolor(self):
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             self.ax.pcolor(self.data, transform=ccrs.Geodetic())
 
     def test_pcolormesh(self):
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             self.ax.pcolormesh(self.data, transform=ccrs.Geodetic())
 
 
@@ -74,24 +74,63 @@ def test_transform_PlateCarree_shortcut():
     with counter:
         trans.transform_path(pth1)
         # pth1 should allow a short-cut.
-        assert_equal(counter.count, 0)
+        assert counter.count == 0
 
     with counter:
         trans.transform_path(pth2)
-        assert_equal(counter.count, 1)
+        assert counter.count == 1
 
     with counter:
         trans.transform_path(pth3)
-        assert_equal(counter.count, 2)
+        assert counter.count == 2
+
+
+class Test_InterProjectionTransform():
+    def pc_2_pc(self):
+        return InterProjectionTransform(
+            ccrs.PlateCarree(), ccrs.PlateCarree())
+
+    def pc_2_rob(self):
+        return InterProjectionTransform(ccrs.PlateCarree(), ccrs.Robinson())
+
+    def rob_2_rob_shifted(self):
+        return InterProjectionTransform(
+            ccrs.Robinson(), ccrs.Robinson(central_longitude=0))
+
+    def test_eq(self):
+        assert self.pc_2_pc() == self.pc_2_pc()
+        assert self.pc_2_rob() == self.pc_2_rob()
+        assert self.rob_2_rob_shifted() == self.rob_2_rob_shifted()
+
+        assert not self.pc_2_rob() == self.rob_2_rob_shifted()
+        assert not self.pc_2_pc() == 'not a transform obj'
+
+    def test_ne(self):
+        assert not self.pc_2_pc() != self.pc_2_pc()
+        print(self.pc_2_pc() != self.pc_2_rob())
+        assert self.pc_2_pc() != self.pc_2_rob()
+
+
+class Test_Axes_add_geometries():
+    def teardown_method(self):
+        plt.close()
+
+    @mock.patch('cartopy.mpl.geoaxes.GeoAxes.add_feature')
+    @mock.patch('cartopy.feature.ShapelyFeature')
+    def test_styler_kwarg(self, ShapelyFeature, add_feature_method):
+        ax = GeoAxes(plt.figure(), [0, 0, 1, 1],
+                     map_projection=ccrs.Robinson())
+        ax.add_geometries(mock.sentinel.geometries, mock.sentinel.crs,
+                          styler=mock.sentinel.styler, wibble='wobble')
+
+        ShapelyFeature.assert_called_once_with(
+            mock.sentinel.geometries, mock.sentinel.crs, wibble='wobble')
+
+        add_feature_method.assert_called_once_with(
+            ShapelyFeature(), styler=mock.sentinel.styler)
 
 
 @cleanup
 def test_geoaxes_subplot():
     ax = plt.subplot(1, 1, 1, projection=ccrs.PlateCarree())
-    assert_equal(str(ax.__class__),
-                 "<class 'cartopy.mpl.geoaxes.GeoAxesSubplot'>")
-
-
-if __name__ == '__main__':
-    import nose
-    nose.runmodule(argv=['-s', '--with-doctest'], exit=False)
+    assert str(ax.__class__) == "<class 'cartopy.mpl.geoaxes.GeoAxesSubplot'>"

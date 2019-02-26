@@ -7,8 +7,10 @@ equivalent functionality in :meth:`cartopy.mpl.geoaxes.GeoAxes.barbs`).
 
 Regridding can be an effective way of visualising a vector field, particularly
 if the data is dense or warped.
+
 """
 __tags__ = ['Vector data']
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -17,7 +19,7 @@ import cartopy.crs as ccrs
 
 def sample_data(shape=(20, 30)):
     """
-    Returns ``(x, y, u, v, crs)`` of some vector data
+    Return ``(x, y, u, v, crs)`` of some vector data
     computed mathematically. The returned CRS will be a North Polar
     Stereographic projection, meaning that the vectors will be unevenly
     spaced in a PlateCarree projection.
@@ -36,16 +38,16 @@ def sample_data(shape=(20, 30)):
 
 
 def main():
-    plt.figure(figsize=(8, 10))
+    fig = plt.figure(figsize=(8, 10))
 
     x, y, u, v, vector_crs = sample_data(shape=(50, 50))
-    ax1 = plt.subplot(2, 1, 1, projection=ccrs.PlateCarree())
+    ax1 = fig.add_subplot(2, 1, 1, projection=ccrs.PlateCarree())
     ax1.coastlines('50m')
     ax1.set_extent([-45, 55, 20, 80], ccrs.PlateCarree())
     ax1.quiver(x, y, u, v, transform=vector_crs)
 
-    ax2 = plt.subplot(2, 1, 2, projection=ccrs.PlateCarree())
-    plt.title('The same vector field regridded')
+    ax2 = fig.add_subplot(2, 1, 2, projection=ccrs.PlateCarree())
+    ax2.set_title('The same vector field regridded')
     ax2.coastlines('50m')
     ax2.set_extent([-45, 55, 20, 80], ccrs.PlateCarree())
     ax2.quiver(x, y, u, v, transform=vector_crs, regrid_shape=20)

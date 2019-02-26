@@ -1,4 +1,13 @@
+"""
+Hurricane Katrina
+-----------------
+
+This example uses the power of Shapely to illustrate states that are likely to
+have been significantly impacted by Hurricane Katrina.
+
+"""
 __tags__ = ['Lines and polygons']
+
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import shapely.geometry as sgeom
@@ -9,7 +18,7 @@ import cartopy.io.shapereader as shpreader
 
 def sample_data():
     """
-    Returns a list of latitudes and a list of longitudes (lons, lats)
+    Return a list of latitudes and a list of longitudes (lons, lats)
     for Hurricane Katrina (2005).
 
     The data was originally sourced from the HURDAT2 dataset from AOML/NOAA:
@@ -31,8 +40,12 @@ def sample_data():
 
 
 def main():
-    ax = plt.axes([0, 0, 1, 1],
-                  projection=ccrs.LambertConformal())
+    fig = plt.figure()
+    # to get the effect of having just the states without a map "background"
+    # turn off the background patch and axes frame
+    ax = fig.add_axes([0, 0, 1, 1], projection=ccrs.LambertConformal(),
+                      frameon=False)
+    ax.background_patch.set_visible(False)
 
     ax.set_extent([-125, -66.5, 20, 50], ccrs.Geodetic())
 
@@ -42,13 +55,8 @@ def main():
 
     lons, lats = sample_data()
 
-    # to get the effect of having just the states without a map "background"
-    # turn off the outline and background patches
-    ax.background_patch.set_visible(False)
-    ax.outline_patch.set_visible(False)
-
-    plt.title('US States which intersect the track '
-              'of Hurricane Katrina (2005)')
+    ax.set_title('US States which intersect the track of '
+                 'Hurricane Katrina (2005)')
 
     # turn the lons and lats into a shapely LineString
     track = sgeom.LineString(zip(lons, lats))
@@ -57,32 +65,31 @@ def main():
     # distance)
     track_buffer = track.buffer(2)
 
-    for state in shpreader.Reader(states_shp).geometries():
-        # pick a default color for the land with a black outline,
-        # this will change if the storm intersects with our track
-        facecolor = [0.9375, 0.9375, 0.859375]
-        edgecolor = 'black'
-
-        if state.intersects(track):
+    def colorize_state(geometry):
+        facecolor = (0.9375, 0.9375, 0.859375)
+        if geometry.intersects(track):
             facecolor = 'red'
-        elif state.intersects(track_buffer):
+        elif geometry.intersects(track_buffer):
             facecolor = '#FF7E00'
+        return {'facecolor': facecolor, 'edgecolor': 'black'}
 
-        ax.add_geometries([state], ccrs.PlateCarree(),
-                          facecolor=facecolor, edgecolor=edgecolor)
+    ax.add_geometries(
+        shpreader.Reader(states_shp).geometries(),
+        ccrs.PlateCarree(),
+        styler=colorize_state)
 
     ax.add_geometries([track_buffer], ccrs.PlateCarree(),
                       facecolor='#C8A2C8', alpha=0.5)
     ax.add_geometries([track], ccrs.PlateCarree(),
-                      facecolor='none')
+                      facecolor='none', edgecolor='k')
 
     # make two proxy artists to add to a legend
     direct_hit = mpatches.Rectangle((0, 0), 1, 1, facecolor="red")
     within_2_deg = mpatches.Rectangle((0, 0), 1, 1, facecolor="#FF7E00")
     labels = ['State directly intersects\nwith track',
               'State is within \n2 degrees of track']
-    plt.legend([direct_hit, within_2_deg], labels,
-               loc='lower left', bbox_to_anchor=(0.025, -0.1), fancybox=True)
+    ax.legend([direct_hit, within_2_deg], labels,
+              loc='lower left', bbox_to_anchor=(0.025, -0.1), fancybox=True)
 
     plt.show()
 

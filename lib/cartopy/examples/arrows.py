@@ -1,14 +1,22 @@
+"""
+Arrows
+------
+
+Plotting arrows.
+
+"""
 __tags__ = ['Vector data']
+
 import matplotlib.pyplot as plt
 import numpy as np
 
-import cartopy
 import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 
 
 def sample_data(shape=(20, 30)):
     """
-    Returns ``(x, y, u, v, crs)`` of some vector data
+    Return ``(x, y, u, v, crs)`` of some vector data
     computed mathematically. The returned crs will be a rotated
     pole CRS, meaning that the vectors will be unevenly spaced in
     regular PlateCarree space.
@@ -27,10 +35,11 @@ def sample_data(shape=(20, 30)):
 
 
 def main():
-    ax = plt.axes(projection=ccrs.Orthographic(-10, 45))
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1, projection=ccrs.Orthographic(-10, 45))
 
-    ax.add_feature(cartopy.feature.OCEAN, zorder=0)
-    ax.add_feature(cartopy.feature.LAND, zorder=0, edgecolor='black')
+    ax.add_feature(cfeature.OCEAN, zorder=0)
+    ax.add_feature(cfeature.LAND, zorder=0, edgecolor='black')
 
     ax.set_global()
     ax.gridlines()
